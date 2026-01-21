@@ -48,21 +48,52 @@ class RegistrationDialog(QDialog):
         
         # 7. Chord
         self.chord_combo = QComboBox()
+        # Add broad list, but we can also set custom text if needed or just select nearest
         self.chord_combo.addItems([
             "None", 
             "Power", "Major", "minor", "M7", "m7", "7th",
             "sus4", "aug", "dim", "MajorTension", "MinorTension"
         ])
+        # Map specific chord string to general category if needed, or just standard names
         chord_val = inferred.get("Chord", "None")
-        self.chord_combo.setCurrentText(chord_val if chord_val else "None")
+        # Try to match fuzzy or exact
+        found_idx = self.chord_combo.findText(chord_val) # exact match
+        if found_idx >= 0:
+            self.chord_combo.setCurrentIndex(found_idx)
+        else:
+            # If not exact match (e.g. CmM7), maybe default to "MinorTension"?
+            # For now just set text if editable? Combo is typically fixed list here.
+            # Let's try to map common ones.
+            if "m" in chord_val:
+                self.chord_combo.setCurrentText("minor")
+            elif "7" in chord_val:
+                 self.chord_combo.setCurrentText("7th")
+            else:
+                 self.chord_combo.setCurrentText("None")
         self.layout.addRow("Chord:", self.chord_combo)
         
         # 8. Group
         self.group_edit = QLineEdit("")
         self.layout.addRow("Group:", self.group_edit)
         
-        # 9. Comment
-        self.comment_edit = QLineEdit("")
+        # 9. Comment (Auto-generated)
+        # Format: "Instruments_Chord_Bars_Beat_Groove_Style"
+        # We have "CommentSuffix" from analysis.
+        # We need to prepend Instruments/Category to make "Bass_Am7..."
+        
+        suffix = inferred.get("CommentSuffix", "")
+        # Construct prefix
+        # Use Category or Instruments? Request: "Bass_Am7..." -> Category usually.
+        # But also "Epiano_Ds9..." -> Instruments?
+        # Let's use Instruments if present, else Category.
+        
+        prefix = self.instruments_edit.text()
+        if not prefix:
+            prefix = self.category_combo.currentText()
+            
+        auto_comment = f"{prefix}_{suffix}" if suffix else ""
+        
+        self.comment_edit = QLineEdit(auto_comment)
         self.layout.addRow("Comment:", self.comment_edit)
         
         # Buttons
