@@ -34,11 +34,13 @@ class FilterPanel(QWidget):
         self.create_row("Measure", measure_opts)
         
         # 4. Chord (2 Rows) or expanded
-        # User requested specific Chords list:
-        # None, Power, Major, minor, M7, 7th
-        # sus4, aug, 9th, b9, 11, b11, 13, b13
-        chord_row1 = ["None", "Power", "Major", "minor", "m7", "M7", "7th"]
-        chord_row2 = ["sus4", "aug", "9th", "b9", "11", "b11", "13", "b13"]
+        # Use shared list from ui_constants
+        full_chords = C.CHORD_LIST
+        # Split into roughly 2 rows
+        mid = len(full_chords) // 2 + 1
+        chord_row1 = full_chords[:mid]
+        chord_row2 = full_chords[mid:]
+        
         self.create_chord_group("Chord", chord_row1, chord_row2)
 
         # Reset Button

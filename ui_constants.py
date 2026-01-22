@@ -22,3 +22,9 @@ FILTER_ROW_SPACING = 2
 
 # Search Bar
 SEARCH_PLACEHOLDER = "Search..."
+
+# Master Lists
+CHORD_LIST = [
+    "None", "Power", "Major", "minor", "M7", "m7", "7th","mM7","sus4", "aug", "dim",
+     "9","m9", "b9","mb9", "11", "m11", "b11", "mb11", "13", "m13", "b13", "mb13"
+]

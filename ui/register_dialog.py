@@ -78,12 +78,9 @@ class RegistrationDialog(QDialog):
         
         # 7. Chord
         self.chord_combo = QComboBox()
-        # Add broad list, but we can also set custom text if needed or just select nearest
-        self.chord_combo.addItems([
-            "None", 
-            "Power", "Major", "minor", "M7", "m7", "7th",
-            "sus4", "aug", "dim", "MajorTension", "MinorTension"
-        ])
+        # Use shared list from ui_constants
+        import ui_constants as C
+        self.chord_combo.addItems(C.CHORD_LIST)
         # Map specific chord string to general category if needed, or just standard names
         chord_val = inferred.get("Chord", "None")
         # Try to match fuzzy or exact

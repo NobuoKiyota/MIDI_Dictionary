@@ -114,6 +114,19 @@ class MainWindow(QMainWindow):
         self.data_manager.integrate_master_db()
         
         self.refresh_list()
+        
+        # Shortcut for Media Key (Space)
+        # Using QShortcut ensures it works even if focus is on child widgets
+        from PySide6.QtGui import QShortcut, QKeySequence
+        self.space_shortcut = QShortcut(QKeySequence(Qt.Key_Space), self)
+        self.space_shortcut.activated.connect(self.toggle_playback)
+
+    def toggle_playback(self):
+        if self.player.is_playing():
+            self.player.stop()
+        else:
+             if hasattr(self, 'last_selected_path') and self.last_selected_path:
+                 self._play_file(self.last_selected_path)
 
     def create_menus(self):
         menubar = self.menuBar()
@@ -184,25 +197,6 @@ class MainWindow(QMainWindow):
         self.auto_play_enabled = checked
         if not checked:
              self.player.stop()
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Space:
-            if self.player.is_playing():
-                self.player.stop()
-            else:
-                 # Play currently selected if available
-                 # We need to know which file is selected. 
-                 # Let's check selection model or track it.
-                 # Actually handle_selection is called on click.
-                 # But Space plays "current".
-                 # We can get current item from Table?
-                 # FileListWidget encapsulates QTableWidget. 
-                 # We might need to ask FileListWidget what's selected, 
-                 # OR just track `self.current_selected_path` variable.
-                 if hasattr(self, 'last_selected_path') and self.last_selected_path:
-                     self._play_file(self.last_selected_path)
-        else:
-            super().keyPressEvent(event)
             
     def _play_file(self, file_path):
         if not os.path.exists(file_path): return
