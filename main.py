@@ -14,7 +14,9 @@ from ui.filter_panel import FilterPanel
 from ui.register_dialog import RegistrationDialog
 from ui.color_dialog import ColorConfigDialog
 from ui.help_dialog import HelpDialog
+from ui.help_dialog import HelpDialog
 from config_manager import ConfigManager
+from midi_player import MidiPlayer
 import ui_constants as C
 
 class MainWindow(QMainWindow):
@@ -35,6 +37,8 @@ class MainWindow(QMainWindow):
         # Core Logic
         self.midi_handler = MidiHandler(self.lib_path)
         self.data_manager = DataManager(self.db_path, self.base_dir)
+        self.player = MidiPlayer()
+        self.auto_play_enabled = False
         
         # UI Setup
         central_widget = QWidget()
@@ -106,6 +110,9 @@ class MainWindow(QMainWindow):
         self.restore_app_state()
         
         # Initial Load
+        # Integrate Master DB first (Startup Logic)
+        self.data_manager.integrate_master_db()
+        
         self.refresh_list()
 
     def create_menus(self):
@@ -128,6 +135,10 @@ class MainWindow(QMainWindow):
         color_action = QAction("Note Colors...", self)
         color_action.triggered.connect(self.open_color_config)
         settings_menu.addAction(color_action)
+        
+        self.auto_play_action = QAction("Auto Play", self, checkable=True)
+        self.auto_play_action.triggered.connect(self.toggle_auto_play)
+        settings_menu.addAction(self.auto_play_action)
         
         # Help Menu
         help_menu = menubar.addMenu("Help")
@@ -168,6 +179,53 @@ class MainWindow(QMainWindow):
     def open_help(self):
         dlg = HelpDialog(self)
         dlg.exec()
+        
+    def toggle_auto_play(self, checked):
+        self.auto_play_enabled = checked
+        if not checked:
+             self.player.stop()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space:
+            if self.player.is_playing():
+                self.player.stop()
+            else:
+                 # Play currently selected if available
+                 # We need to know which file is selected. 
+                 # Let's check selection model or track it.
+                 # Actually handle_selection is called on click.
+                 # But Space plays "current".
+                 # We can get current item from Table?
+                 # FileListWidget encapsulates QTableWidget. 
+                 # We might need to ask FileListWidget what's selected, 
+                 # OR just track `self.current_selected_path` variable.
+                 if hasattr(self, 'last_selected_path') and self.last_selected_path:
+                     self._play_file(self.last_selected_path)
+        else:
+            super().keyPressEvent(event)
+            
+    def _play_file(self, file_path):
+        if not os.path.exists(file_path): return
+        
+        # Get metadata for instrument override
+        # Fix path matching
+        try:
+            rel_path = os.path.relpath(file_path, self.base_dir)
+        except:
+            rel_path = file_path
+            
+        mask = (self.data_manager.df['FilePath'] == file_path) | (self.data_manager.df['FilePath'] == rel_path)
+        
+        inst_text = None
+        if mask.any():
+            inst_text = self.data_manager.df.loc[mask, 'Instruments'].iloc[0]
+            if pd.isna(inst_text): inst_text = None
+            else: inst_text = str(inst_text)
+            
+        print(f"DEBUG: Selected File: {file_path}")
+        print(f"DEBUG: Found Instrument in DB: {inst_text}")
+            
+        self.player.play(file_path, inst_text)
 
     def restore_app_state(self):
         # Load Window State / Geometry / AOT
@@ -215,8 +273,16 @@ class MainWindow(QMainWindow):
         dialog = RegistrationDialog(self, init_data)
         if dialog.exec():
             metadata = dialog.get_metadata()
-            new_path = self.midi_handler.copy_to_library(file_path)
+            
+            # Pass the user-edited filename to copy_to_library
+            # This ensures the physical file is named as requested.
+            target_name = metadata.get("FileName", "")
+            new_path = self.midi_handler.copy_to_library(file_path, target_name)
+            
+            # Update metadata with the ACTUAL final path and filename (in case of collision renaming)
             metadata["FilePath"] = new_path
+            metadata["FileName"] = os.path.splitext(os.path.basename(new_path))[0]
+            
             self.data_manager.add_entry(metadata)
             
             # Save Learning Data (Feedback Loop)
@@ -267,14 +333,49 @@ class MainWindow(QMainWindow):
                     num = 4
                 self.piano_roll.set_notes(info['notes'], info.get('tempo', 120), num, file_path)
             
+            self.last_selected_path = file_path # Track for Space key
+            
+            if self.auto_play_enabled:
+                 self._play_file(file_path)
+            
             # Update Comment Display
-            # Use DataManager to find the comment for this path
-            mask = self.data_manager.df['FilePath'] == file_path
+            # Fix path matching (DB uses relative, UI uses absolute)
+            try:
+                rel_path = os.path.relpath(file_path, self.base_dir)
+            except:
+                rel_path = file_path
+                
+            mask = (self.data_manager.df['FilePath'] == file_path) | (self.data_manager.df['FilePath'] == rel_path)
+            
             if mask.any():
-                comment = self.data_manager.df.loc[mask, 'Comment'].item()
+                comment = self.data_manager.df.loc[mask, 'Comment'].iloc[0] # Use iloc[0] for safety
                 self.comment_display.setText(str(comment) if pd.notna(comment) else "")
             else:
                 self.comment_display.clear()
+
+    def _play_file(self, file_path):
+        if not os.path.exists(file_path): return
+        
+        # Get metadata for instrument override
+        # Fix path matching
+        try:
+            rel_path = os.path.relpath(file_path, self.base_dir)
+        except:
+            rel_path = file_path
+            
+        mask = (self.data_manager.df['FilePath'] == file_path) | (self.data_manager.df['FilePath'] == rel_path)
+        
+        inst_text = None
+        if mask.any():
+            inst_text = self.data_manager.df.loc[mask, 'Instruments'].iloc[0]
+            if pd.isna(inst_text): inst_text = None
+            else: inst_text = str(inst_text)
+            
+        print(f"DEBUG: Selected File: {file_path}")
+        print(f"DEBUG: Found Instrument in DB: {inst_text}")
+        
+        self.player.play(file_path, inst_text)
+
 
     def handle_rename(self, old_path, new_name):
         if not os.path.exists(old_path):

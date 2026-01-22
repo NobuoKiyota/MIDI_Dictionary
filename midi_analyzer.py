@@ -86,7 +86,10 @@ class MidiAnalyzer:
             # Duration.User example: "4.4".
             # If duration is 4 bars and TS 4/4 -> "4.4"
             # If duration is 2 bars and TS 4/4 -> "2.4"?
-            comment_parts.append(f"{result['duration_bars']}.{ts.numerator}")
+            dur_str = f"{result['duration_bars']}.{ts.numerator}"
+            # User request: Omit if "4.4" (Default)
+            if dur_str != "4.4":
+                comment_parts.append(dur_str)
             
             # Beat
             comment_parts.append(result['beat_type'])

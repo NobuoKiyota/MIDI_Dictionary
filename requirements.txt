@@ -5,3 +5,4 @@ pretty_midi
 numpy
 customtkinter
 tkinterdnd2
+pygame

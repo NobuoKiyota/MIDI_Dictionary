@@ -11,8 +11,21 @@ class DataManager:
         
         # Determine Local DB Name
         hostname = platform.node()
-        self.local_db_name = f"library_{hostname}.xlsx"
-        self.local_db_path = os.path.join(self.root_dir, self.local_db_name)
+        self.local_db_name = f"{hostname}.xlsx"
+        # self.local_db_path will be in MIDI_Library/[Hostname]/[Hostname].xlsx
+        # But we need to make sure the folder exists when saving.
+        # self.root_dir is base dir... MIDI_Library is inside base_dir?
+        # Check main.py: self.lib_path = os.path.join(base_dir, "MIDI_Library")
+        # And DataManager init gets self.db_path (library.xlsx) and self.base_dir.
+        # So "root_dir" here corresponds to base_dir of the app?
+        # Let's check main.py call: DataManager(self.db_path, self.base_dir)
+        # Yes. So MIDI_Library is at os.path.join(self.root_dir, "MIDI_Library")
+        self.midi_lib_path = os.path.join(self.root_dir, "MIDI_Library")
+        self.host_dir = os.path.join(self.midi_lib_path, hostname)
+        if not os.path.exists(self.host_dir):
+            os.makedirs(self.host_dir)
+            
+        self.local_db_path = os.path.join(self.host_dir, self.local_db_name)
         
         self.columns = [
             "FileName", "FilePath", "Category", "Instruments", 
@@ -23,66 +36,112 @@ class DataManager:
         self.df = self.load_db()
 
     def load_db(self):
-        # Scan for all 'library_*.xlsx' in root_dir
-        pattern = os.path.join(self.root_dir, "library_*.xlsx")
-        files = glob.glob(pattern)
+        # We don't load everything into self.df for the runtime "Active DB" usually?
+        # Requirement: "Integrate master... at startup". 
+        # So maybe load_db should just load *local* DB for appending?
+        # BUT main.py uses data_manager.df for displaying the list.
+        # IF we want to display EVERYTHING, we should load MasterLibrary.xlsx if it exists (which is result of integration).
+        # OR we just load everything fresh every time?
+        # "統合するマスターをMasterLibraly.xlsxとする... 統合処理はアプリ起動時に自動で行う"
+        # (Master is MasterLibraly.xlsx. Integration is done auto on startup)
+        #
+        # So flow is:
+        # 1. Integration runs -> creates MasterLibraly.xlsx from all sub-excels.
+        # 2. Main App loads MasterLibraly.xlsx to show list?
+        # 3. New entries -> Saved to Local Excel (and added to memory DF? or memory DF is Master?)
         
-        # Also include legacy 'library.xlsx' if it exists and migrate?
-        # Or just read it.
-        legacy_path = os.path.join(self.root_dir, "library.xlsx")
-        if os.path.exists(legacy_path):
-            files.append(legacy_path)
-            
-        if not files:
-            # Init empty local DB if nothing exists
-            return pd.DataFrame(columns=self.columns)
+        # If we add to Master DF, next time we save, we must be careful NOT to overwrite Master with Local data only,
+        # OR not to save Master data into Local file.
+        
+        # Proposed logic:
+        # self.df ALWAYS represents what is on screen.
+        # On Startup: self.df = MasterLibrary.xlsx (after integration)
+        # On Add: Append to self.df AND Append to Local Excel.
+        
+        master_path = os.path.join(self.root_dir, "MasterLibraly.xlsx")
+        if os.path.exists(master_path):
+             try:
+                 df = pd.read_excel(master_path)
+                 for col in self.columns:
+                    if col not in df.columns:
+                        df[col] = ""
+                 return df.fillna("")
+             except:
+                 pass
+                 
+        return pd.DataFrame(columns=self.columns)
+
+    def integrate_master_db(self):
+        """Scans MIDI_Library/*/*.xlsx and creates MasterLibraly.xlsx"""
+        # scan
+        if not os.path.exists(self.midi_lib_path):
+            return
             
         dfs = []
+        # Glob pattern: MIDI_Library/*/*.xlsx
+        pattern = os.path.join(self.midi_lib_path, "*", "*.xlsx")
+        files = glob.glob(pattern)
+        
+        if not files:
+            return
+            
         for f in files:
+            # Skip conflict files or temps
+            if "~" in f: continue
+            
             try:
                 d = pd.read_excel(f)
-                # Normalize cols
+                # Normalize
                 for col in self.columns:
                     if col not in d.columns:
                         d[col] = ""
-                d = d.fillna("")
-                
-                # Track Source
-                d["_SourceFile"] = os.path.basename(f)
+                # Add Source Info if needed, but maybe not strictly required for Master view if paths are absolute/correct relative
+                # Ensure FilePath is usable.
+                # If they are relative to Project Root, they are fine.
                 dfs.append(d)
             except Exception as e:
-                print(f"Error loading {f}: {e}")
+                print(f"Error integrating {f}: {e}")
                 
-        if not dfs:
-            return pd.DataFrame(columns=self.columns)
+        if dfs:
+            combined = pd.concat(dfs, ignore_index=True)
+            # Dedup? Maybe by FilePath?
+            combined.drop_duplicates(subset=["FilePath"], keep="last", inplace=True)
             
-        combined_df = pd.concat(dfs, ignore_index=True)
-        return combined_df
+            master_dest = os.path.join(self.root_dir, "MasterLibraly.xlsx")
+            combined.to_excel(master_dest, index=False)
+            
+            # Update self.df to reflect this fresh integration
+            self.df = combined.fillna("")
 
     def save_db(self):
-        # Group by _SourceFile and save
-        if self.df.empty:
-            return
-
-        # Ensure _SourceFile exists (for new rows)
-        if "_SourceFile" not in self.df.columns:
-            self.df["_SourceFile"] = self.local_db_name
-            
-        # Fill NaN source with local
-        self.df["_SourceFile"] = self.df["_SourceFile"].replace("", self.local_db_name)
-        self.df["_SourceFile"] = self.df["_SourceFile"].fillna(self.local_db_name)
+        # We only save NEW entries to the LOCAL DB.
+        # But self.df contain EVERYTHING.
+        # This is tricky without tracking "New/Modified" rows.
+        # Simplified approach:
+        # We don't save self.df back to Master. We leave Master as read-generated.
+        # We ONLY append properly in `add_entry`.
+        pass
         
-        grouped = self.df.groupby("_SourceFile")
+    def _append_to_local(self, row_dict):
+        # Helper to append just one row to local excel
+        # Check modification: If local excel exists, load it, append, save.
         
-        for source_file, group_df in grouped:
-            # content columns only
-            save_df = group_df[self.columns]
+        try:
+            if os.path.exists(self.local_db_path):
+                local_df = pd.read_excel(self.local_db_path)
+            else:
+                local_df = pd.DataFrame(columns=self.columns)
             
-            save_path = os.path.join(self.root_dir, source_file)
-            try:
-                save_df.to_excel(save_path, index=False)
-            except Exception as e:
-                print(f"Error saving {save_path}: {e}")
+            new_df = pd.DataFrame([row_dict])
+            # Align columns
+            for col in self.columns:
+                if col not in new_df.columns:
+                    new_df[col] = ""
+                    
+            combined = pd.concat([local_df, new_df], ignore_index=True)
+            combined.to_excel(self.local_db_path, index=False)
+        except Exception as e:
+            print(f"Error saving to local db {self.local_db_path}: {e}")
 
     def add_entry(self, metadata):
         # Ensure new entry has all columns
@@ -102,7 +161,9 @@ class DataManager:
         
         new_row_df = pd.DataFrame([row])
         self.df = pd.concat([self.df, new_row_df], ignore_index=True)
-        self.save_db()
+        
+        # Save to local persistence
+        self._append_to_local(row)
 
     def get_filtered_data(self, filters):
         # Return a Filtered VIEW of the DF

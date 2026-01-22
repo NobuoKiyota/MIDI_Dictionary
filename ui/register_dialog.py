@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QDialog, QFormLayout, QComboBox, QLineEdit, QDialogButtonBox, QLabel
+from instrument_config import INSTRUMENT_MAP
 
 class RegistrationDialog(QDialog):
     def __init__(self, parent=None, initial_data=None):
@@ -40,10 +41,32 @@ class RegistrationDialog(QDialog):
         self.layout.addRow("Category:", self.category_combo)
         
         # 4. Instruments
-        # Default to original filename as requested
+        # Use ComboBox with GM Instruments
+        self.instruments_combo = QComboBox()
+        # Sort keys for display
+        inst_list = sorted(INSTRUMENT_MAP.keys())
+        self.instruments_combo.addItems(inst_list)
+        
+        # Default selection logic
         def_inst = self.data.get("filename", "")
-        self.instruments_edit = QLineEdit(def_inst) 
-        self.layout.addRow("Instruments:", self.instruments_edit)
+        # Try to find a match in filename or meta?
+        # User said "Instrument to be selectable".
+        # If inferred meta has something useful, use it.
+        # Otherwise, default to Piano? Or try to fuzzy match filename?
+        
+        # Let's try to match inferred "Category" or just Piano
+        # Or if "Instruments" was passed in data (from file?) -> data["filename"] is usually just filename.
+        # Let's default to "Acoustic Grand Piano" (0)
+        self.instruments_combo.setCurrentText("Acoustic Grand Piano")
+        
+        # If there is a hint in filename (e.g. "bass"), try to select it
+        lower_name = def_inst.lower()
+        for name in inst_list:
+            if name.lower() in lower_name:
+                self.instruments_combo.setCurrentText(name)
+                break
+                
+        self.layout.addRow("Instruments:", self.instruments_combo)
         
         # 5. Time Signature
         self.ts_edit = QLineEdit(self.data.get("time_signature", "4/4")) 
@@ -99,7 +122,7 @@ class RegistrationDialog(QDialog):
         # Auto-Generate Filename from Metadata
         # Format: "Instruments_Chord_Bars_Beat_Groove_Style" (based on suffix)
         suffix = inferred.get("CommentSuffix", "")
-        prefix = self.instruments_edit.text()
+        prefix = self.instruments_combo.currentText()
         if not prefix:
             prefix = self.category_combo.currentText()
             
@@ -119,7 +142,7 @@ class RegistrationDialog(QDialog):
             "Root": self.root_combo.currentText(),
             "Scale": self.scale_combo.currentText(),
             "Category": self.category_combo.currentText(),
-            "Instruments": self.instruments_edit.text(),
+            "Instruments": self.instruments_combo.currentText(),
             "TimeSignature": self.ts_edit.text(),
             "Bar": self.bar_edit.text(),
             "Chord": self.chord_combo.currentText(),

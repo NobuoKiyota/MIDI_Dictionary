@@ -91,16 +91,36 @@ class MidiHandler:
             'inferred_meta': inferred_meta
         }
 
-    def copy_to_library(self, src_path):
-        """Copies the file to the MIDI_Library folder. Returns new absolute path."""
-        filename = os.path.basename(src_path)
-        dest_path = os.path.join(self.library_path, filename)
+    def copy_to_library(self, src_path, target_filename=None):
+        """
+        Copies the file to the MIDI_Library/[Hostname]/ folder. 
+        Returns new absolute path.
+        If target_filename is provided, it uses that name (handling extension).
+        """
+        import platform
+        hostname = platform.node()
         
-        # Simple collision handling
+        # Subdirectory for this host
+        host_lib_path = os.path.join(self.library_path, hostname)
+        if not os.path.exists(host_lib_path):
+            os.makedirs(host_lib_path)
+            
+        if target_filename:
+            # Ensure extension matches source (or assume midi?) assumption safe for now
+            src_ext = os.path.splitext(src_path)[1]
+            if not target_filename.lower().endswith(src_ext.lower()):
+                target_filename += src_ext
+            filename = target_filename
+        else:
+            filename = os.path.basename(src_path)
+            
+        dest_path = os.path.join(host_lib_path, filename)
+        
+        # Collision handling: append _1, _2...
         base, ext = os.path.splitext(filename)
         counter = 1
         while os.path.exists(dest_path):
-            dest_path = os.path.join(self.library_path, f"{base}_{counter}{ext}")
+            dest_path = os.path.join(host_lib_path, f"{base}_{counter}{ext}")
             counter += 1
             
         shutil.copy2(src_path, dest_path)

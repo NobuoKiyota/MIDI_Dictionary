@@ -15,6 +15,7 @@ env/
 dist_temp/
 *.zip
 *.exe
+test*
 
 # Application Data
 # User-specific databases
@@ -23,7 +24,8 @@ library_*.xlsx
 # If you want to share the DB structure but not data, keep library.xlsx if empty.
 # If you want to share the actual MIDI files, do NOT ignore this.
 # Assuming typical use case where library is local:
-MIDI_Library/
+OldMidi/
+MIDI_learning/
 
 # Logs
 *.log

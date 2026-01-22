@@ -3,7 +3,6 @@ setlocal
 
 set VENV_DIR=.venv
 
-if exist %VENV_DIR% (
     echo Virtual environment found. Activating...
     call %VENV_DIR%\Scripts\activate.bat
     if errorlevel 1 (
@@ -11,6 +10,12 @@ if exist %VENV_DIR% (
         echo Please try deleting the '%VENV_DIR%' folder and running this script again.
         pause
         exit /b 1
+    )
+    
+    echo Checking for new dependencies...
+    pip install -r requirements.txt
+    if errorlevel 1 (
+        echo Warning: Failed to install/update dependencies.
     )
 ) else (
     echo Creating virtual environment...
