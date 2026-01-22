@@ -9,11 +9,11 @@ class FileListWidget(QTableWidget):
 
     def __init__(self):
         super().__init__()
-        self.setColumnCount(9)
+        self.setColumnCount(8)
         self.setHorizontalHeaderLabels([
             "FileName", "Key", "Category", 
             "Inst", "Beat", "Bar", 
-            "Chord", "Group", "Comment"
+            "Chord", "Group"
         ])
         
         header = self.horizontalHeader()
@@ -30,7 +30,6 @@ class FileListWidget(QTableWidget):
         self.setColumnWidth(5, 30)  # Bar
         self.setColumnWidth(6, 60)  # Chord
         self.setColumnWidth(7, 80)  # Group
-        self.setColumnWidth(8, 150) # Comment
         
         self.horizontalHeader().setMinimumSectionSize(30)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -53,7 +52,7 @@ class FileListWidget(QTableWidget):
         self.setRowCount(0)
         self.setRowCount(len(df))
         
-        # Columns: FileName, Key, Category, Inst, Beat, Bar, Chord, Group, Comment
+        # Columns: FileName, Key, Category, Inst, Beat, Bar, Chord, Group
         
         for row_idx, (_, row_data) in enumerate(df.iterrows()):
             # 0. FileName
@@ -91,11 +90,6 @@ class FileListWidget(QTableWidget):
             item7.setFlags(item7.flags() | Qt.ItemIsEditable) 
             self.setItem(row_idx, 7, item7)
             
-            # 8. Comment
-            item8 = QTableWidgetItem(str(row_data.get('Comment', '')))
-            item8.setFlags(item8.flags() | Qt.ItemIsEditable) 
-            self.setItem(row_idx, 8, item8)
-
         self.setSortingEnabled(True)
         self.is_populating = False
         

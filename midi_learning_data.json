@@ -1,0 +1,33 @@
+{
+    "FngrBass.mid": {
+        "filename": "FngrBass.mid",
+        "hash": "1886ed09ef7613adaad39f85247ec567",
+        "ground_truth": {
+            "root": "G",
+            "scale": "Minor",
+            "chord": "F",
+            "time_signature": "4/4",
+            "beat_type": "16beat",
+            "groove": "Straight",
+            "style": "Combi"
+        },
+        "ai_raw_prediction": {
+            "root": "G",
+            "scale": "Minor",
+            "chord": "F",
+            "time_signature": "4/4",
+            "beat_type": "16beat",
+            "groove": "Shuffle",
+            "style": "Figuration"
+        },
+        "internal_features": {
+            "poly_ratio": 0.0,
+            "is_octave": false,
+            "avg_duration": 0.12,
+            "avg_interval": 0.93,
+            "is_walking": false
+        },
+        "corrections_made": true,
+        "correction_count": 2
+    }
+}

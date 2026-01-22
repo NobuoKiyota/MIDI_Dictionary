@@ -4,6 +4,7 @@ class RegistrationDialog(QDialog):
     def __init__(self, parent=None, initial_data=None):
         super().__init__(parent)
         self.setWindowTitle("Register MIDI")
+        self.resize(400, 360)
         self.data = initial_data or {}
         
         self.layout = QFormLayout(self)
@@ -21,6 +22,13 @@ class RegistrationDialog(QDialog):
         self.root_combo.setCurrentText(root_val if root_val else "No")
         self.layout.addRow("Root:", self.root_combo)
         
+        # 2b. Scale
+        self.scale_combo = QComboBox()
+        self.scale_combo.addItems(["Major", "Minor", "Dorian", "Mixolydian", "Lydian", "Phrygian", "Locrian", "Unknown"])
+        scale_val = inferred.get("Scale", "Major")
+        self.scale_combo.setCurrentText(scale_val if scale_val else "Major")
+        self.layout.addRow("Scale:", self.scale_combo)
+        
         # 3. Category (Expanded)
         self.category_combo = QComboBox()
         self.category_combo.addItems([
@@ -32,9 +40,8 @@ class RegistrationDialog(QDialog):
         self.layout.addRow("Category:", self.category_combo)
         
         # 4. Instruments
-        def_inst = inferred.get("Instruments", "")
-        if not def_inst: # Fallback to filename based logic if needed or just empty
-             def_inst = "Drum" if "Rythem" in (self.data.get("filename", "") or "") else ""
+        # Default to original filename as requested
+        def_inst = self.data.get("filename", "")
         self.instruments_edit = QLineEdit(def_inst) 
         self.layout.addRow("Instruments:", self.instruments_edit)
         
@@ -67,34 +74,37 @@ class RegistrationDialog(QDialog):
             if "m" in chord_val:
                 self.chord_combo.setCurrentText("minor")
             elif "7" in chord_val:
-                 self.chord_combo.setCurrentText("7th")
+                self.chord_combo.setCurrentText("7th")
             else:
                  self.chord_combo.setCurrentText("None")
         self.layout.addRow("Chord:", self.chord_combo)
+        
+        # 7b. Groove (Artic)
+        self.groove_edit = QLineEdit(inferred.get("Groove", ""))
+        self.groove_edit.setPlaceholderText("Straight if empty")
+        self.layout.addRow("Groove:", self.groove_edit)
+
+        # 7c. Style
+        self.style_edit = QLineEdit(inferred.get("Style", ""))
+        self.layout.addRow("Style:", self.style_edit)
         
         # 8. Group
         self.group_edit = QLineEdit("")
         self.layout.addRow("Group:", self.group_edit)
         
-        # 9. Comment (Auto-generated)
-        # Format: "Instruments_Chord_Bars_Beat_Groove_Style"
-        # We have "CommentSuffix" from analysis.
-        # We need to prepend Instruments/Category to make "Bass_Am7..."
+        # 9. Comment
+        self.comment_edit = QLineEdit("")
+        self.layout.addRow("Comment:", self.comment_edit)
         
+        # Auto-Generate Filename from Metadata
+        # Format: "Instruments_Chord_Bars_Beat_Groove_Style" (based on suffix)
         suffix = inferred.get("CommentSuffix", "")
-        # Construct prefix
-        # Use Category or Instruments? Request: "Bass_Am7..." -> Category usually.
-        # But also "Epiano_Ds9..." -> Instruments?
-        # Let's use Instruments if present, else Category.
-        
         prefix = self.instruments_edit.text()
         if not prefix:
             prefix = self.category_combo.currentText()
             
-        auto_comment = f"{prefix}_{suffix}" if suffix else ""
-        
-        self.comment_edit = QLineEdit(auto_comment)
-        self.layout.addRow("Comment:", self.comment_edit)
+        auto_name = f"{prefix}_{suffix}" if suffix else prefix
+        self.name_edit.setText(auto_name)
         
         # Buttons
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -103,14 +113,19 @@ class RegistrationDialog(QDialog):
         self.layout.addRow(self.buttons)
 
     def get_metadata(self):
+        inferred = self.data.get("inferred_meta", {})
         return {
             "FileName": self.name_edit.text(),
             "Root": self.root_combo.currentText(),
+            "Scale": self.scale_combo.currentText(),
             "Category": self.category_combo.currentText(),
             "Instruments": self.instruments_edit.text(),
             "TimeSignature": self.ts_edit.text(),
             "Bar": self.bar_edit.text(),
             "Chord": self.chord_combo.currentText(),
+            "Groove": self.groove_edit.text(),
+            "Style": self.style_edit.text(),
             "Group": self.group_edit.text(),
-            "Comment": self.comment_edit.text()
+            "Comment": self.comment_edit.text(),
+            "_raw_ai_result": inferred.get("_raw_ai_result", {})
         }

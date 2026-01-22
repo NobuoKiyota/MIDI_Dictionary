@@ -1,8 +1,9 @@
 import sys
 import os
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QMenuBar, QMenu, QLineEdit
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QMenuBar, QMenu, QLineEdit, QTextEdit
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt, QTimer
+import pandas as pd
 
 # Import our modules
 from data_manager import DataManager
@@ -55,7 +56,14 @@ class MainWindow(QMainWindow):
         layout_a.addWidget(self.search_bar)
         
         self.file_list = FileListWidget()
-        layout_a.addWidget(self.file_list)
+        layout_a.addWidget(self.file_list, stretch=1) # Stretch list
+        
+        # Bottom Comment Display
+        self.comment_display = QTextEdit()
+        self.comment_display.setReadOnly(True)
+        self.comment_display.setPlaceholderText("Selected file comment...")
+        self.comment_display.setFixedHeight(80) # Small fixed height
+        layout_a.addWidget(self.comment_display)
         
         # --- Panel B (Right Side) ---
         self.panel_b = QWidget()
@@ -210,6 +218,10 @@ class MainWindow(QMainWindow):
             new_path = self.midi_handler.copy_to_library(file_path)
             metadata["FilePath"] = new_path
             self.data_manager.add_entry(metadata)
+            
+            # Save Learning Data (Feedback Loop)
+            self.midi_handler.save_learning_data(file_path, metadata)
+            
             self.refresh_list()
             
             # Parse TS for numerator
@@ -254,6 +266,15 @@ class MainWindow(QMainWindow):
                 except:
                     num = 4
                 self.piano_roll.set_notes(info['notes'], info.get('tempo', 120), num, file_path)
+            
+            # Update Comment Display
+            # Use DataManager to find the comment for this path
+            mask = self.data_manager.df['FilePath'] == file_path
+            if mask.any():
+                comment = self.data_manager.df.loc[mask, 'Comment'].item()
+                self.comment_display.setText(str(comment) if pd.notna(comment) else "")
+            else:
+                self.comment_display.clear()
 
     def handle_rename(self, old_path, new_name):
         if not os.path.exists(old_path):
@@ -274,7 +295,7 @@ class MainWindow(QMainWindow):
         if os.path.exists(new_path):
             reply = QMessageBox.question(
                 self, "Overwrite Confirmation",
-                f"File '{new_name}' already exists.\nOverwrite?",
+                f"File '{new_name}' already exists.\\nOverwrite?",
                 QMessageBox.Yes | QMessageBox.No
             )
             
@@ -285,7 +306,7 @@ class MainWindow(QMainWindow):
                 try:
                     os.remove(new_path)
                 except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Failed to delete existing file:\n{e}")
+                    QMessageBox.warning(self, "Error", f"Failed to delete existing file:\\n{e}")
                     QTimer.singleShot(0, self.refresh_list)
                     return
 
@@ -302,7 +323,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.refresh_list)
             
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to rename file:\n{e}")
+            QMessageBox.warning(self, "Error", f"Failed to rename file:\\n{e}")
             QTimer.singleShot(0, self.refresh_list)
 
 if __name__ == "__main__":
@@ -322,7 +343,7 @@ if __name__ == "__main__":
             background-color: #3e3e3e;
             color: white;
         }
-        QLineEdit, QComboBox {
+        QLineEdit, QComboBox, QTextEdit {
             background-color: #3e3e3e;
             color: white;
             border: 1px solid #5e5e5e;

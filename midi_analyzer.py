@@ -71,8 +71,9 @@ class MidiAnalyzer:
             result['groove'] = rhythm_info['groove'] # Straight, Swing, Dotted
             
             # 5. Style Detection
-            style = self._detect_style(all_notes, pm.instruments)
-            result['style'] = style
+            style_data = self._detect_style(all_notes, pm.instruments)
+            result['style'] = style_data['style']
+            result['style_features'] = style_data['features']
             
             # 6. Generate Comment String
             # Format: "Inst_Chord_Bars_Beat_Groove_Style"
@@ -115,6 +116,7 @@ class MidiAnalyzer:
             'beat_type': '8beat',
             'groove': '',
             'style': '',
+            'style_features': {},
             'comment_suffix': '',
             'tempo': 120
         }
@@ -125,38 +127,74 @@ class MidiAnalyzer:
         return pretty_midi.TimeSignature(4, 4, 0)
 
     def _detect_key(self, notes):
-        # Krumhansl-Schmuckler algorithm simplified or just weighted pitch count
-        # Simple weighted count: Duration * Velocity
-        scores = collections.defaultdict(float)
+        # Krumhansl-Schmuckler Key Finding Algorithm
+        if not notes:
+            return {'root': 'C', 'scale': 'Major'}
+
+        # 1. Calculate Chroma Vector (Weighted by duration)
+        chroma_vector = [0] * 12
+        total_duration = 0
         
         for note in notes:
-            # Weighted by duration
-            duration = note.end - note.start
+            dur = note.end - note.start
             pc = note.pitch % 12
-            scores[pc] += duration
+            chroma_vector[pc] += dur
+            total_duration += dur
             
-        if not scores:
+        if total_duration == 0:
             return {'root': 'C', 'scale': 'Major'}
             
-        # Find max
-        root_pc = max(scores, key=scores.get)
-        root_name = self.PITCH_CLASSES[root_pc]
+        # Normalize
+        chroma_vector = [x / total_duration for x in chroma_vector]
+
+        # 2. Key Profiles (Krumhansl-Schmuckler)
+        # Major profile
+        major_profile = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+        # Minor profile
+        minor_profile = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
         
-        # Determine Major/Minor?
-        # Check for Minor 3rd vs Major 3rd
-        m3 = scores.get((root_pc + 3) % 12, 0)
-        M3 = scores.get((root_pc + 4) % 12, 0)
+        # Normalize profiles for correlation
+        major_mean = np.mean(major_profile)
+        major_std = np.std(major_profile)
+        major_norm = [(x - major_mean) / major_std for x in major_profile]
         
-        scale = "Major" if M3 >= m3 else "minor"
+        minor_mean = np.mean(minor_profile)
+        minor_std = np.std(minor_profile)
+        minor_norm = [(x - minor_mean) / minor_std for x in minor_profile]
         
-        return {'root': root_name, 'scale': scale}
+        # Normalize chroma
+        chroma_mean = np.mean(chroma_vector)
+        chroma_std = np.std(chroma_vector)
+        if chroma_std == 0:
+             return {'root': self.PITCH_CLASSES[chroma_vector.index(max(chroma_vector))], 'scale': 'Major'} # Fallback
+             
+        chroma_norm = [(x - chroma_mean) / chroma_std for x in chroma_vector]
+
+        # 3. Calculate Correlations
+        best_score = -2.0
+        best_key = ("C", "Major")
+        
+        for i in range(12):
+            # Test Major
+            # Rotate chroma to match root i
+            rotated_chroma = chroma_norm[i:] + chroma_norm[:i]
+            corr_major = np.corrcoef(rotated_chroma, major_norm)[0][1]
+            
+            if corr_major > best_score:
+                best_score = corr_major
+                best_key = (self.PITCH_CLASSES[i], "Major")
+                
+            # Test Minor
+            corr_minor = np.corrcoef(rotated_chroma, minor_norm)[0][1]
+            
+            if corr_minor > best_score:
+                best_score = corr_minor
+                best_key = (self.PITCH_CLASSES[i], "Minor")
+                
+        return {'root': best_key[0], 'scale': best_key[1]}
 
     def _detect_chord(self, notes, inferred_root_name):
-        # Flatten all pitches
-        pitches = set(note.pitch % 12 for note in notes)
-        
-        # Simple interval matching against the Inferred Root?
-        # Or find the bass note first?
+        # Keep existing simplified Logic for now, but ensure it handles empty input
         if not notes:
              return {'chord_name': ''}
              
@@ -165,10 +203,9 @@ class MidiAnalyzer:
         bass_pc = sorted_by_pitch[0].pitch % 12
         bass_name = self.PITCH_CLASSES[bass_pc]
         
-        # Calculate intervals from bass
+        pitches = set(note.pitch % 12 for note in notes)
         intervals = set((p - bass_pc) % 12 for p in pitches)
         
-        # Definitions (Simplified)
         chord_type = ""
         
         # 3rds
@@ -187,7 +224,6 @@ class MidiAnalyzer:
         # Logic
         root = bass_name
         
-        # Triad
         if has_M3:
             chord_type = "" # Major
             if has_m7:
@@ -201,26 +237,21 @@ class MidiAnalyzer:
             elif has_M7:
                 chord_type = "mM7"
         else:
-            # Power chord or Suspended?
             if has_P5:
-               if 2 in intervals: # sus2
+               if 2 in intervals:
                    chord_type = "sus2"
-               elif 5 in intervals: # sus4
+               elif 5 in intervals:
                    chord_type = "sus4"
                else:
-                   chord_type = "5" # Power
+                   chord_type = "5"
         
-        # Extensions (9, 11, 13) - simplified checking high intervals not mod 12 if possible,
-        # but here we only have PC.
-        # Check standard tensions if 7th exists
         if "7" in chord_type:
-            if 2 in intervals: # 9th
+            if 2 in intervals: 
                 chord_type = chord_type.replace("7", "9")
         
-        # Diminished / Augmented
-        if has_m3 and has_d5:
+        if has_m3 and has_d5 and not has_P5:
             chord_type = "dim"
-        if has_M3 and has_A5:
+        if has_M3 and has_A5 and not has_P5:
             chord_type = "aug"
 
         return {'chord_name': f"{root}{chord_type}"}
@@ -229,124 +260,152 @@ class MidiAnalyzer:
         if not notes:
             return {'beat_type': '8beat', 'groove': 'Straight'}
             
-        # Calculate approximate grid
         seconds_per_beat = 60.0 / tempo
         seconds_per_16th = seconds_per_beat / 4.0
         
-        # Analyze start times modulo 16th note grid
-        on_8th = 0
         on_16th = 0
         
-        # Triplet / Groove Counters
-        # Only count notes that are OFF-BEAT for groove detection bias
-        # to avoid "Shuffle" false positives on straight quarter notes.
-        is_triplet = 0
-        groove_relevant_notes = 1
+        # Groove Detection
+        # Check swing ratio
+        
+        # Calculate offset from straight 8th grid
+        # 8th note grid: 0, 0.5, 1.0, 1.5... beats
+        
+        swing_candidates = []
         
         for note in notes:
-            start = note.start
+            start_beat = note.start / seconds_per_beat
             
-            # Check 16th grid
-            grid_pos = start / seconds_per_16th
-            grid_idx = round(grid_pos)
+            # Check 16th content
+            grid_16th_pos = note.start / seconds_per_16th
+            if abs(grid_16th_pos - round(grid_16th_pos)) < 0.15:
+                if round(grid_16th_pos) % 2 != 0:
+                    on_16th += 1
             
-            # Beat Grid position (0, 1, 2...)
-            beat_pos = start / seconds_per_beat
-            dist_from_beat = abs(beat_pos - round(beat_pos))
-            is_on_beat = dist_from_beat < 0.1
-            
-            if not is_on_beat:
-                groove_relevant_notes += 1
-                
-                # Check Triplet (1/3 of beat)
-                # 3 notes per beat. 
-                # positions: 0, 0.33, 0.66
-                triplet_pos = start / (seconds_per_beat / 3.0)
-                triplet_dev = abs(triplet_pos - round(triplet_pos))
-                
-                if triplet_dev < 0.1: 
-                    is_triplet += 1
+            # Check Swing
+            # Look at notes around the "and" of the beat (x.5)
+            # If they are delayed to ~x.66 -> Triplet/Swing 
+            beat_fraction = start_beat % 1.0
+            if 0.4 < beat_fraction < 0.8: # "Backbeat" area
+                swing_candidates.append(beat_fraction)
 
-            # Beat Type Rhythm Check (Use all notes)
-            # Check if it aligns with 16th grid (odd indices)
-            # Even indices: 0 (beat), 2 (8th), 4 (beat), 6 (8th)...
-            if grid_idx % 2 != 0:
-                on_16th += 1
-            else:
-                on_8th += 1
-                
         # Beat Type
-        # If we have significant 16th note content
-        beat_type = "16beat" if on_16th > (len(notes) * 0.05) else "8beat"
+        beat_type = "16beat" if on_16th > (len(notes) * 0.1) else "8beat"
         
         # Groove
         groove = "Straight"
-        
-        # Swing Detection
-        if groove_relevant_notes > 0:
-            if (is_triplet / groove_relevant_notes) > 0.5:
-                 groove = "Shuffle" 
-        
-        # Dotted Detection
-        dotted_count = 0
-        for note in notes:
-            dur = note.end - note.start
-            beats = dur / seconds_per_beat
-            rem = beats % 1.0
-            
-            # Dotted 8th (0.75)
-            if 0.70 < rem < 0.80: 
-                dotted_count += 1
-            # Dotted Quarter (1.5)
-            if 0.45 < (beats % 1.0) < 0.55 and beats > 1.0:
-                 dotted_count += 1
-                
-        if dotted_count > len(notes) * 0.15: 
-            groove = "dot" 
-            
+        if swing_candidates:
+            avg_offbeat = np.mean(swing_candidates)
+            if 0.60 < avg_offbeat < 0.72: # ~2/3
+                groove = "Shuffle"
+            elif 0.72 <= avg_offbeat: # Hard swing or dotted
+                 groove = "dot" # Dotted 8th feel
+            elif 0.53 < avg_offbeat <= 0.60:
+                 groove = "Swing" # Light swing
+                 
         return {'beat_type': beat_type, 'groove': groove}
 
     def _detect_style(self, notes, instruments):
-        # Logic to guess performance style
+        # Result Dictionary
+        features = {}
         style = []
         
+        if len(notes) < 3: 
+             return {'style': "Lead", 'features': {'note_count': len(notes)}}
+
+        # Analyze Polyphony (Chords vs Single Notes)
+        simultaneous = 0
+        checks = 0
+        for i in range(len(notes)):
+            current_start = notes[i].start
+            current_end = notes[i].end
+            overlap_count = 0
+            for j in range(len(notes)):
+                if i == j: continue
+                # check overlap
+                if max(current_start, notes[j].start) < min(current_end, notes[j].end):
+                    overlap_count += 1
+            if overlap_count > 0:
+                simultaneous += 1
+            checks += 1
+            
+        poly_ratio = simultaneous / checks if checks > 0 else 0
+        features['poly_ratio'] = float(f"{poly_ratio:.2f}")
+        
+        is_polyphonic = poly_ratio > 0.4
+        
         # 1. Octave Bass
-        # Check if notes alternate consistently by Octave
-        if self._is_octave_pattern(notes):
+        # Check explicit octave jumps in sequence
+        is_oct = self._is_octave_pattern(notes)
+        features['is_octave'] = is_oct
+        
+        if is_oct:
             style.append("Oct")
+        
+        # Average Duration
+        avg_dur = np.mean([n.end - n.start for n in notes]) if notes else 0
+        features['avg_duration'] = float(f"{avg_dur:.2f}")
+
+        # 2. Chord (Block Chords) / Backing
+        if is_polyphonic:
+            # If polyphonic and NOT Octave bass, likely "Chord" or "Pad"
+            if avg_dur > 1.5: # Long notes
+                style.append("Pad")
+            else:
+                style.append("Chord")
+        
+        # 3. Arpeggio
+        # Monophonic but wide range?
+        if not is_polyphonic:
+            # Check if likely Arp
+            # Consistent interval jumps?
+            intervals = [abs(notes[i].pitch - notes[i+1].pitch) for i in range(len(notes)-1)]
+            avg_interval = np.mean(intervals) if intervals else 0
+            features['avg_interval'] = float(f"{avg_interval:.2f}")
             
-        # 2. Arpeggio vs Block
-        # Check overlaps
-        simultaneous_notes = 0
-        total_checks = 0
-        for i in range(len(notes)-1):
-            if notes[i].end > notes[i+1].start + 0.05: # Overlap
-                simultaneous_notes += 1
-            total_checks += 1
-            
-        if total_checks > 0:
-            overlap_ratio = simultaneous_notes / total_checks
-            if overlap_ratio > 0.6:
-                style.append("Chord") # Block chords
-            elif overlap_ratio < 0.2:
-                 # Check if intervals are wide -> Arp
-                 style.append("Arp") # Likely Arpeggio
-                 
-        # 3. Figuration (Busy, fast moving melodic line?)
-        # High note density
-        avg_duration = np.mean([n.end - n.start for n in notes]) if notes else 0
-        if avg_duration < 0.2: # Very short notes
-            style.append("Figuration")
-            
-        return "_".join(style) if style else ""
+            if avg_interval > 3.0: # Average interval > Minor 3rd
+                style.append("Arp")
+            else:
+                # Small intervals -> Melody or Scale
+                # Check for "Walking" (steady stream of quarters)
+                is_walk = self._is_walking_bass(notes)
+                features['is_walking'] = is_walk
+                
+                if is_walk:
+                     style.append("Walking")
+        
+        # 4. Figuration / Riff
+        # Fast notes?
+        if avg_dur < 0.25 and not "Arp" in style:
+             style.append("Figuration")
+
+        final_style = "_".join(style) if style else "Melody"
+        return {'style': final_style, 'features': features}
 
     def _is_octave_pattern(self, notes):
         if len(notes) < 4: return False
-        
         octave_jumps = 0
         for i in range(len(notes)-1):
-            interval = abs(notes[i].pitch - notes[i+1].pitch)
-            if interval == 12:
+            if abs(notes[i].pitch - notes[i+1].pitch) == 12:
                 octave_jumps += 1
-                
-        return octave_jumps > (len(notes) * 0.4)
+        return octave_jumps > (len(notes) * 0.3)
+        
+    def _is_walking_bass(self, notes):
+        # Continuous stream, mostly quarter notes, melodic movement
+        # Calculate gap between notes
+        gaps = []
+        durations = []
+        for i in range(len(notes)-1):
+            gaps.append(notes[i+1].start - notes[i].end)
+            durations.append(notes[i].end - notes[i].start)
+            
+        avg_gap = np.mean(gaps) if gaps else 0
+        avg_dur = np.mean(durations) if durations else 0
+        
+        # Walking lines usually legato or slight gap, steady duration
+        # Assume approx 120bpm -> quarter = 0.5s
+        # But we don't know tempo here easily without passing it.
+        # Check consistency of duration
+        std_dur = np.std(durations) if durations else 1
+        return avg_gap < 0.1 and std_dur < 0.1 and avg_dur > 0.3 and avg_dur < 0.8
+

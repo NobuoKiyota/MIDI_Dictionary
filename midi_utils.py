@@ -2,6 +2,9 @@ import os
 import shutil
 import pretty_midi
 import math
+import pandas as pd
+from datetime import datetime
+import hashlib
 
 class MidiHandler:
     def __init__(self, library_path):
@@ -50,25 +53,31 @@ class MidiHandler:
         # Construct result dictionary matching expectation + new metadata
         # infer_metadata is now populated by analysis_result
         
+        groove_val = analysis_result.get('groove', '')
+        groove_display = "" if groove_val == "Straight" else groove_val # Mask Straight
+
         # Map analysis result to "inferred_meta" structure expected by Dialog
         inferred_meta = {
-            "Category": "", # Still needs some category guessing if analyzer didn't return it partially
+            "Category": "", # Still needs some category guessing
             "Instruments": "", # Will fill with filename in dialog logic usually
             "Chord": analysis_result.get('chord', ''),
             "Root": analysis_result.get('root', ''),
+            "Scale": analysis_result.get('scale', ''),
+            "Groove": groove_display,
+            "Style": analysis_result.get('style', 'Melody'),
             "TimeSignature": analysis_result.get('time_signature', '4/4'),
             "DurationBars": analysis_result.get('duration_bars', 4),
-            "CommentSuffix": analysis_result.get('comment_suffix', '')
+            "CommentSuffix": analysis_result.get('comment_suffix', ''),
+            
+            # Internal fields for Learning
+            "_raw_ai_result": analysis_result
         }
 
-        # Basic Category Guessing (Ported/Simplified from old logic if Analyzer doesn't provide it)
-        # Analyzer provides 'style', let's use that to help Category?
-        # Or keep the Polyphony/Pitch logic?
-        # Let's simple check:
+        # Basic Category Guessing
         avg_pitch = sum(n['pitch'] for n in notes_data) / len(notes_data) if notes_data else 60
         if avg_pitch < 48:
             inferred_meta["Category"] = "Bass"
-        elif analysis_result['chord']: # Strong chord indication
+        elif analysis_result.get('chord'): # Strong chord indication
             inferred_meta["Category"] = "Chord"
         else:
             inferred_meta["Category"] = "Melody" # Default
@@ -96,3 +105,105 @@ class MidiHandler:
             
         shutil.copy2(src_path, dest_path)
         return dest_path
+
+    def save_learning_data(self, src_path, updated_meta):
+        """
+        Saves the learning data to MIDI_learning folder.
+        updated_meta: The final metadata from the dialog (User Corrected).
+        """
+        raw_ai = updated_meta.get("_raw_ai_result", {})
+        if not raw_ai: return # Should not happen if flow is correct
+
+        filename = os.path.basename(src_path)
+        learning_dir = "MIDI_learning"
+        
+        # 1. Prepare Directory
+        if not os.path.exists(learning_dir):
+            os.makedirs(learning_dir)
+            
+        # 2. Copy MIDI File
+        dest_path = os.path.join(learning_dir, filename)
+        try:
+            shutil.copy2(src_path, dest_path)
+        except Exception as e:
+            print(f"Error copying learning file: {e}") 
+            # Continue to save excel even if copy fails? No, better warn but we are in logic class.
+            
+        # 3. Prepare Data for Excel
+        # Helper to convert numpy types
+        def to_native(obj):
+            if hasattr(obj, 'item'): 
+                return obj.item()
+            return obj
+
+        # Map UI keys (Capitalized) to AI keys (snake_case)
+        # UI: Root, Scale, Chord, TimeSignature, Groove, Style
+        # AI: root, scale, chord, time_signature, groove, style
+        
+        key_map = {
+            "Root": "root",
+            "Scale": "scale",
+            "Chord": "chord",
+            "TimeSignature": "time_signature",
+            "Groove": "groove",
+            "Style": "style"
+        }
+
+        # Determine corrections
+        correction_count = 0
+        ground_truth = {}
+        
+        for ui_k, ai_k in key_map.items():
+            user_val = str(updated_meta.get(ui_k, "")).strip()
+            ai_val = str(raw_ai.get(ai_k, "")).strip()
+            
+            # Groove Special: UI might be empty for Straight
+            if ai_k == "groove" and ai_val == "Straight" and user_val == "":
+                # Matches (UI empty == Straight)
+                ground_truth[ai_k] = "Straight"
+            else:
+                ground_truth[ai_k] = user_val if user_val else ai_val # Fallback? No, UI value IS the truth.
+                # If UI value matches AI value (or empty is not allowed logic), count diffs.
+                # In main app, UI is pre-filled. So User val IS always present.
+                if user_val != ai_val:
+                    # Specific check for Groove Straight vs Empty
+                    if ai_k == "groove" and ai_val == "Straight" and user_val == "":
+                        pass # No correction
+                    else:
+                        correction_count += 1
+        
+        row = {
+            "FileName": filename,
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "IsUserCorrected": correction_count > 0,
+            "CorrectionCount": correction_count
+        }
+        
+        # Add Ground Truth
+        for ui_k, ai_k in key_map.items():
+             # If UI Groove is empty, it means Straight
+            val = updated_meta.get(ui_k, "")
+            if ui_k == "Groove" and val == "":
+                val = "Straight"
+            row[f"GT_{ai_k}"] = val
+            
+        # Add AI Prediction
+        for ai_k in key_map.values():
+            row[f"AI_{ai_k}"] = str(raw_ai.get(ai_k, ""))
+            
+        # Add Features
+        features = raw_ai.get('style_features', {})
+        for k, v in features.items():
+            row[f"FEAT_{k}"] = to_native(v)
+            
+        # 4. Save to Excel
+        excel_path = os.path.join(learning_dir, "learning_data.xlsx")
+        try:
+            if os.path.exists(excel_path):
+                df = pd.read_excel(excel_path)
+                df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+            else:
+                df = pd.DataFrame([row])
+            df.to_excel(excel_path, index=False)
+        except Exception as e:
+            print(f"Excel Save Error: {e}")

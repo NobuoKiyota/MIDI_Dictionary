@@ -3,3 +3,5 @@ pandas
 openpyxl
 pretty_midi
 numpy
+customtkinter
+tkinterdnd2
