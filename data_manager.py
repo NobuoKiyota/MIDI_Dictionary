@@ -29,7 +29,7 @@ class DataManager:
         
         self.columns = [
             "FileName", "FilePath", "Category", "Instruments", 
-            "TimeSignature", "Measure", "Bar", "Chord",
+            "TimeSignature", "BAR", "Bar", "Chord",
             "Root", "Group", "Comment"
         ]
         
@@ -123,12 +123,19 @@ class DataManager:
         pass
         
     def _append_to_local(self, row_dict):
-        # Helper to append just one row to local excel
-        # Check modification: If local excel exists, load it, append, save.
+        # Helper to append just one row to local excel with Dropdowns
+        import openpyxl
+        from openpyxl.worksheet.datavalidation import DataValidation
+        from openpyxl.utils import get_column_letter
+        import ui_constants as C
         
         try:
+            # 1. Update Data (Pandas)
             if os.path.exists(self.local_db_path):
-                local_df = pd.read_excel(self.local_db_path)
+                try:
+                    local_df = pd.read_excel(self.local_db_path)
+                except:
+                    local_df = pd.DataFrame(columns=self.columns)
             else:
                 local_df = pd.DataFrame(columns=self.columns)
             
@@ -140,6 +147,55 @@ class DataManager:
                     
             combined = pd.concat([local_df, new_df], ignore_index=True)
             combined.to_excel(self.local_db_path, index=False)
+            
+            # 2. Add Validations (OpenPyXL)
+            wb = openpyxl.load_workbook(self.local_db_path)
+            ws = wb.active
+            
+            # Helper to add validation
+            def add_dv(col_name, options_list):
+                 # Find Col Index
+                try:
+                    col_idx = combined.columns.get_loc(col_name) + 1 # 1-based
+                    col_letter = get_column_letter(col_idx)
+                except KeyError:
+                    return # Column not found
+                
+                # Check for "Lists" sheet for long lists
+                if len(",".join(options_list)) > 255:
+                     list_sheet_name = "_Lists"
+                     if list_sheet_name not in wb.sheetnames:
+                         wb.create_sheet(list_sheet_name)
+                     lws = wb[list_sheet_name]
+                     
+                     # Write options to column (e.g. A for this list)
+                     # Simple hash to separate lists? 
+                     # For now, let's just dump Instruments to A
+                     if col_name == "Instruments":
+                         for i, opt in enumerate(options_list):
+                             lws.cell(row=i+1, column=1, value=opt)
+                         formula = f"='{list_sheet_name}'!$A$1:$A${len(options_list)}"
+                     else:
+                         return # Handle other long lists if any
+                     
+                     dv = DataValidation(type="list", formula1=formula, allow_blank=True)
+                else:
+                    dv = DataValidation(type="list", formula1=f'"{",".join(options_list)}"', allow_blank=True)
+                
+                # Apply to entire column (or just used range)
+                # Apply from row 2 to max_row + 100
+                ws.add_data_validation(dv)
+                dv.add(f"{col_letter}2:{col_letter}1000")
+
+            # Apply Validations
+            add_dv("Root", C.KEY_LIST) # Mapped from text "Key" in user request, but column is Root? User said "Key". 
+                                       # In columns we have "Root". Assuming User "Key" -> DB "Root".
+            add_dv("Category", C.CATEGORY_LIST)
+            add_dv("Instruments", C.INSTRUMENT_LIST)
+            add_dv("Chord", C.CHORD_LIST)
+            
+            wb.save(self.local_db_path)
+            
         except Exception as e:
             print(f"Error saving to local db {self.local_db_path}: {e}")
 

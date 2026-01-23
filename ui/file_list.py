@@ -12,7 +12,7 @@ class FileListWidget(QTableWidget):
         self.setColumnCount(8)
         self.setHorizontalHeaderLabels([
             "FileName", "Key", "Category", 
-            "Inst", "Beat", "Bar", 
+            "Inst", "Beat", "BAR", 
             "Chord", "Group"
         ])
         
@@ -27,7 +27,7 @@ class FileListWidget(QTableWidget):
         self.setColumnWidth(2, 60)  # Category
         self.setColumnWidth(3, 60)  # Inst
         self.setColumnWidth(4, 40)  # Beat
-        self.setColumnWidth(5, 30)  # Bar
+        self.setColumnWidth(5, 30)  # BAR
         self.setColumnWidth(6, 60)  # Chord
         self.setColumnWidth(7, 80)  # Group
         
@@ -52,7 +52,7 @@ class FileListWidget(QTableWidget):
         self.setRowCount(0)
         self.setRowCount(len(df))
         
-        # Columns: FileName, Key, Category, Inst, Beat, Bar, Chord, Group
+        # Columns: FileName, Key, Category, Inst, Beat, BAR, Chord, Group
         
         for row_idx, (_, row_data) in enumerate(df.iterrows()):
             # 0. FileName
@@ -77,8 +77,10 @@ class FileListWidget(QTableWidget):
             item4 = QTableWidgetItem(str(row_data.get('TimeSignature', '')))
             self.setItem(row_idx, 4, item4)
             
-            # 5. Bar
-            item5 = QTableWidgetItem(str(row_data.get('Bar', ''))) # Bar Length
+            # 5. BAR
+            # Try BAR, then Bar
+            val = row_data.get('BAR', row_data.get('Bar', ''))
+            item5 = QTableWidgetItem(str(val)) 
             self.setItem(row_idx, 5, item5)
             
             # 6. Chord

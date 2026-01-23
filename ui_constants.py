@@ -28,3 +28,13 @@ CHORD_LIST = [
     "None", "Power", "Major", "minor", "M7", "m7", "7th","mM7","sus4", "aug", "dim",
      "9","m9", "b9","mb9", "11", "m11", "b11", "mb11", "13", "m13", "b13", "mb13"
 ]
+
+KEY_LIST = ['-', 'C', 'Cs', 'D', 'Ds', 'E', 'F', 'Fs', 'G', 'Gs', 'A', 'As', 'B']
+
+CATEGORY_LIST = [
+    "Rythem", "Bass", "Chord", "Arp", "Melody",
+    "Fill", "FX", "Perc", "Pad", "Lead"
+]
+
+from instrument_config import INSTRUMENT_MAP
+INSTRUMENT_LIST = sorted(INSTRUMENT_MAP.keys())

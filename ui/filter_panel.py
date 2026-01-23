@@ -15,23 +15,18 @@ class FilterPanel(QWidget):
         self.groups = {}
         
         # 0. Root
-        root_opts = ["No"] + ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-        self.create_row("Root", root_opts)
-
+        self.create_row("Root", C.KEY_LIST, title_text="Key") # User wants "Key" label, column is Root
+        
         # 1. Category
-        cat_opts = [
-            "Rythem", "Bass", "Chord", "Arp", "Melody",
-            "Fill", "FX", "Perc", "Pad", "Lead"
-        ]
-        self.create_row("Category", cat_opts)
+        self.create_row("Category", C.CATEGORY_LIST)
         
         # 2. Time Signature
         ts_opts = ["2/4", "3/4", "4/4", "5/8", "6/8", "7/8", "8/8", "9/8", "12/8"]
         self.create_row("TimeSignature", ts_opts, title_text="Time Sig")
         
-        # 3. Measure
-        measure_opts = ["1BAR", "2BAR", "3BAR", "4BAR", "8BAR", "16BAR"]
-        self.create_row("Measure", measure_opts)
+        # 3. BAR
+        bar_opts = ["1BAR", "2BAR", "3BAR", "4BAR", "8BAR", "16BAR"]
+        self.create_row("BAR", bar_opts)
         
         # 4. Chord (2 Rows) or expanded
         # Use shared list from ui_constants

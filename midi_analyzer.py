@@ -4,7 +4,8 @@ import collections
 
 class MidiAnalyzer:
     def __init__(self):
-        self.PITCH_CLASSES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+        # User requested specific naming: Cs instead of C#, etc.
+        self.PITCH_CLASSES = ['C', 'Cs', 'D', 'Ds', 'E', 'F', 'Fs', 'G', 'Gs', 'A', 'As', 'B']
 
     def analyze(self, file_path):
         try:
@@ -24,6 +25,9 @@ class MidiAnalyzer:
             
             # 1. Base Metrics
             result = {}
+            
+            # Check for Drums (Channel 10)
+            is_drum_track = any(inst.is_drum for inst in pm.instruments)
             
             # Time Signature (Infer from MIDI or default 4/4)
             ts = self._detect_time_signature(pm)
@@ -48,22 +52,27 @@ class MidiAnalyzer:
             bar_length = beat_length * ts.numerator # Assuming denominator 4 roughly for duration calc
             total_time = all_notes[-1].end
             duration_bars = max(1, round(total_time / bar_length))
-            result['duration_bars'] = float(f"{duration_bars:.1f}") 
-            # Reformat to match user example "4.4"? 
-            # User said "4.4". If it meant 4/4 4 bars, maybe "Bars.TS"? 
-            # But let's stick to "Bars" for now, or just integer if cleaner.
-            # Actually, let's just use the int duration_bars.
             result['duration_bars'] = int(duration_bars)
 
             # 2. Key & Root Detection
-            key_info = self._detect_key(all_notes)
-            result['root'] = key_info['root']
-            result['scale'] = key_info['scale'] # Major/Minor
+            if is_drum_track:
+                result['root'] = "-"
+                result['scale'] = "Major" # Default placeholder, user requested Key=No which maps to "-"
+                key_info = {'root': "-", 'scale': "Major"}
+            else:
+                key_info = self._detect_key(all_notes)
+                result['root'] = key_info['root']
+                result['scale'] = key_info['scale'] # Major/Minor
             
             # 3. Chord Detection
-            chord_info = self._detect_chord(all_notes, key_info['root'])
-            result['chord'] = chord_info['chord_name']
-            result['chord_detail'] = chord_info # Store full info if needed
+            if is_drum_track:
+                result['chord'] = "None"
+                chord_info = {'chord_name': "None"}
+            else:
+                chord_info = self._detect_chord(all_notes, key_info['root'])
+                result['chord'] = chord_info['chord_name']
+            
+            result['chord_detail'] = chord_info
 
             # 4. Rhythm/Groove Detection
             rhythm_info = self._detect_rhythm(all_notes, result['tempo'], ts)
@@ -75,21 +84,29 @@ class MidiAnalyzer:
             result['style'] = style_data['style']
             result['style_features'] = style_data['features']
             
+            # Category
+            if is_drum_track:
+                result['Category'] = "Rythem"
+            else:
+                # Basic inference for category if not drums
+                # Heuristic: Bass range? 
+                avg_pitch = np.mean([n.pitch for n in all_notes]) if all_notes else 60
+                if avg_pitch < 45: # Low pitch -> Bass
+                     result['Category'] = "Bass"
+                elif 45 <= avg_pitch < 60 and "Chord" in result['style']:
+                     result['Category'] = "Chord"
+                else:
+                     result['Category'] = "Melody" # Default
+            
             # 6. Generate Comment String
-            # Format: "Inst_Chord_Bars_Beat_Groove_Style"
+            # Format: "Chord_Beat_Groove" (Style moved to prefix, Tabs removed)
             comment_parts = []
             
             # Chord
-            if result['chord']:
+            if result['chord'] and result['chord'] != "None":
                 comment_parts.append(result['chord'])
             
-            # Duration.User example: "4.4".
-            # If duration is 4 bars and TS 4/4 -> "4.4"
-            # If duration is 2 bars and TS 4/4 -> "2.4"?
-            dur_str = f"{result['duration_bars']}.{ts.numerator}"
-            # User request: Omit if "4.4" (Default)
-            if dur_str != "4.4":
-                comment_parts.append(dur_str)
+            # Duration - REMOVED as per user request (No "4.4")
             
             # Beat
             comment_parts.append(result['beat_type'])
@@ -98,9 +115,9 @@ class MidiAnalyzer:
             if result['groove'] and result['groove'] != "Straight":
                  comment_parts.append(result['groove'])
                  
-            # Style
-            if result['style']:
-                comment_parts.append(result['style'])
+            # Style - REMOVED from suffix (will be used as prefix)
+            # if result['style']:
+            #    comment_parts.append(result['style'])
                 
             result['comment_suffix'] = "_".join(comment_parts)
             

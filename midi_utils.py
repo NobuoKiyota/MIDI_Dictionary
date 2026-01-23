@@ -106,6 +106,11 @@ class MidiHandler:
             os.makedirs(host_lib_path)
             
         if target_filename:
+            # Sanitize filename (remove illegal chars)
+            forbidden = '<>:"/\\|?*\n\r\t'
+            for char in forbidden:
+                target_filename = target_filename.replace(char, '_')
+            
             # Ensure extension matches source (or assume midi?) assumption safe for now
             src_ext = os.path.splitext(src_path)[1]
             if not target_filename.lower().endswith(src_ext.lower()):

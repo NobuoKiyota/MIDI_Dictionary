@@ -3,6 +3,7 @@ setlocal
 
 set VENV_DIR=.venv
 
+if exist %VENV_DIR%\Scripts\activate.bat (
     echo Virtual environment found. Activating...
     call %VENV_DIR%\Scripts\activate.bat
     if errorlevel 1 (

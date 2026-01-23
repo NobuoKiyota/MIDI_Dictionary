@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QDialog, QFormLayout, QComboBox, QLineEdit, QDialogButtonBox, QLabel
-from instrument_config import INSTRUMENT_MAP
+import ui_constants as C
 
 class RegistrationDialog(QDialog):
     def __init__(self, parent=None, initial_data=None):
@@ -16,12 +16,22 @@ class RegistrationDialog(QDialog):
         self.name_edit = QLineEdit(self.data.get("filename", ""))
         self.layout.addRow("File Name:", self.name_edit)
         
-        # 2. Root
+        # 2. Key (Root) - User requested "Key", stored as "Root"
         self.root_combo = QComboBox()
-        self.root_combo.addItems(["No"] + ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"])
-        root_val = inferred.get("Root", self.data.get("root", "No"))
-        self.root_combo.setCurrentText(root_val if root_val else "No")
-        self.layout.addRow("Root:", self.root_combo)
+        self.root_combo.addItems(C.KEY_LIST)
+        
+        root_val = inferred.get("Root", self.data.get("root", "-"))
+        if root_val == "No": root_val = "-" 
+        
+        # If value not in list (e.g. "C#"), map to "Cs" if needed?
+        # User defined list: Cs, Ds... 
+        # But MidiAnalyzer might output "C#".
+        # Mapping logic:
+        if "#" in str(root_val):
+            root_val = str(root_val).replace("#", "s")
+            
+        self.root_combo.setCurrentText(root_val if root_val in C.KEY_LIST else "-")
+        self.layout.addRow("Key:", self.root_combo)
         
         # 2b. Scale
         self.scale_combo = QComboBox()
@@ -30,22 +40,17 @@ class RegistrationDialog(QDialog):
         self.scale_combo.setCurrentText(scale_val if scale_val else "Major")
         self.layout.addRow("Scale:", self.scale_combo)
         
-        # 3. Category (Expanded)
+        # 3. Category
         self.category_combo = QComboBox()
-        self.category_combo.addItems([
-            "Rythem", "Bass", "Chord", "Arp", "Melody",
-            "Fill", "FX", "Perc", "Pad", "Lead"
-        ])
+        self.category_combo.addItems(C.CATEGORY_LIST)
         cat_val = inferred.get("Category", "Rythem")
-        self.category_combo.setCurrentText(cat_val if cat_val else "Rythem")
+        self.category_combo.setCurrentText(cat_val if cat_val in C.CATEGORY_LIST else "Rythem")
         self.layout.addRow("Category:", self.category_combo)
         
         # 4. Instruments
-        # Use ComboBox with GM Instruments
         self.instruments_combo = QComboBox()
-        # Sort keys for display
-        inst_list = sorted(INSTRUMENT_MAP.keys())
-        self.instruments_combo.addItems(inst_list)
+        self.instruments_combo.addItems(C.INSTRUMENT_LIST)
+        inst_list = C.INSTRUMENT_LIST # Restore variable for fuzzy logic below
         
         # Default selection logic
         def_inst = self.data.get("filename", "")
@@ -79,7 +84,6 @@ class RegistrationDialog(QDialog):
         # 7. Chord
         self.chord_combo = QComboBox()
         # Use shared list from ui_constants
-        import ui_constants as C
         self.chord_combo.addItems(C.CHORD_LIST)
         # Map specific chord string to general category if needed, or just standard names
         chord_val = inferred.get("Chord", "None")
@@ -117,13 +121,27 @@ class RegistrationDialog(QDialog):
         self.layout.addRow("Comment:", self.comment_edit)
         
         # Auto-Generate Filename from Metadata
-        # Format: "Instruments_Chord_Bars_Beat_Groove_Style" (based on suffix)
+        # Format: "Style_Instruments_Chord_Beat_Groove" (Style moved to prefix)
         suffix = inferred.get("CommentSuffix", "")
-        prefix = self.instruments_combo.currentText()
-        if not prefix:
-            prefix = self.category_combo.currentText()
+        inst_name = self.instruments_combo.currentText()
+        if not inst_name:
+            inst_name = self.category_combo.currentText()
             
-        auto_name = f"{prefix}_{suffix}" if suffix else prefix
+        # User Request: Prefix should include midi block name (interpreted as Style)
+        # Suffix internal parts were modified in analyzer to remove Style
+        style_val = inferred.get("Style", "")
+        
+        # Build Name
+        parts = []
+        if style_val:
+            parts.append(style_val)
+            
+        parts.append(inst_name)
+        
+        if suffix:
+            parts.append(suffix)
+            
+        auto_name = "_".join(parts)
         self.name_edit.setText(auto_name)
         
         # Buttons

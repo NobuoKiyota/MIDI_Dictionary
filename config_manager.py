@@ -9,17 +9,17 @@ class ConfigManager:
         # A nice starting palette (Rainbow-ish or Standard)
         self.default_colors = [
             "#FF0000",   # C  (Red)
-            "#FF7F00",   # C#
-            "#FFFF00",   # D  (Yellow)
-            "#7FFF00",   # D#
-            "#00FF00",   # E  (Green)
-            "#00FF7F",   # F
-            "#00FFFF",   # F# (Cyan)
-            "#007FFF",   # G
-            "#0000FF",   # G# (Blue)
-            "#7F00FF",   # A
-            "#FF00FF",   # A# (Magenta)
-            "#FF007F"    # B
+            "#59FF00",   # C#
+            "#FFD900",   # D  (Yellow)
+            "#00CCF8",   # D#
+            "#FF4800",   # E  (Green)
+            "#FFF700",   # F
+            "#00AEFF",   # F# (Cyan)
+            "#FF9D00",   # G
+            "#62FF00",   # G# (Blue)
+            "#FF00E6",   # A
+            "#91FF00",   # A# (Magenta)
+            "#6600FF"    # B
         ]
 
     def get_note_color(self, pitch_class):

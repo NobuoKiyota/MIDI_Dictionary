@@ -129,7 +129,8 @@ INSTRUMENT_MAP = {
     "Telephone Ring": 124,
     "Helicopter": 125,
     "Applause": 126,
-    "Gunshot": 127
+    "Gunshot": 127,
+    "Standard Drum Kit": 0
 }
 
 # Helper to get program number safely
