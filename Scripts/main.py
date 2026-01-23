@@ -29,10 +29,11 @@ class MainWindow(QMainWindow):
         self.config_manager = ConfigManager()
         
         # Paths
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.base_dir = base_dir # Save reference
-        self.lib_path = os.path.join(base_dir, "MIDI_Library")
-        self.db_path = os.path.join(base_dir, "library.xlsx")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.project_root = os.path.dirname(script_dir) # Go up one level to root
+        self.base_dir = self.project_root # Alias for compatibility if needed
+        self.lib_path = os.path.join(self.project_root, "MIDI_Library")
+        self.db_path = os.path.join(self.project_root, "library.xlsx")
         
         # Core Logic
         self.midi_handler = MidiHandler(self.lib_path)
@@ -142,6 +143,12 @@ class MainWindow(QMainWindow):
         self.swap_action.triggered.connect(self.toggle_layout)
         view_menu.addAction(self.swap_action)
         
+        view_menu.addSeparator()
+        
+        self.vis_action = QAction("Visualize Learning Progress...", self)
+        self.vis_action.triggered.connect(self.open_visualization)
+        view_menu.addAction(self.vis_action)
+        
         # Settings Menu
         settings_menu = menubar.addMenu("Settings")
         
@@ -158,6 +165,13 @@ class MainWindow(QMainWindow):
         help_action = QAction("Manual...", self)
         help_action.triggered.connect(self.open_help)
         help_menu.addAction(help_action)
+
+    def open_visualization(self):
+        from learning_visualizer import LearningVisualizer
+        learning_path = os.path.join(self.base_dir, "MIDI_learning", "learning_data.xlsx")
+        # LearningVisualizer expects a master window but we can pass self.
+        # Note: Visualizer is a Toplevel so it opens a new window.
+        LearningVisualizer(self, learning_path)
 
     def toggle_layout(self):
         # Swap A and B

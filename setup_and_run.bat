@@ -41,7 +41,7 @@ if exist %VENV_DIR%\Scripts\activate.bat (
 )
 
 echo Starting MIDI Dictionary...
-python main.py
+python Scripts/main.py
 
 if errorlevel 1 (
     echo.
