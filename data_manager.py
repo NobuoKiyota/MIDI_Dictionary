@@ -29,7 +29,7 @@ class DataManager:
         
         self.columns = [
             "FileName", "FilePath", "Category", "Instruments", 
-            "TimeSignature", "BAR", "Bar", "Chord",
+            "TimeSignature", "BAR", "Chord",
             "Root", "Group", "Comment"
         ]
         
@@ -60,15 +60,32 @@ class DataManager:
         
         master_path = os.path.join(self.root_dir, "MasterLibraly.xlsx")
         if os.path.exists(master_path):
-             try:
-                 df = pd.read_excel(master_path)
-                 for col in self.columns:
+            try:
+                df = pd.read_excel(master_path)
+                
+                # Consolidation: Merge 'Bar' into 'BAR'
+                if 'Bar' in df.columns:
+                    if 'BAR' not in df.columns:
+                        df['BAR'] = df['Bar']
+                    else:
+                        df['BAR'] = df['BAR'].fillna(df['Bar'])
+                        try:
+                             mask = (df['BAR'] == "") & (df['Bar'] != "")
+                             df.loc[mask, 'BAR'] = df.loc[mask, 'Bar']
+                        except:
+                             pass
+
+                # Normalize BAR values (remove .0)
+                if 'BAR' in df.columns:
+                    df['BAR'] = df['BAR'].astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+
+                for col in self.columns:
                     if col not in df.columns:
                         df[col] = ""
-                 return df.fillna("")
-             except:
-                 pass
-                 
+                return df.fillna("")
+            except:
+                pass
+        
         return pd.DataFrame(columns=self.columns)
 
     def integrate_master_db(self):
@@ -91,6 +108,23 @@ class DataManager:
             
             try:
                 d = pd.read_excel(f)
+                
+                # Consolidation: Merge 'Bar' into 'BAR'
+                if 'Bar' in d.columns:
+                    if 'BAR' not in d.columns:
+                        d['BAR'] = d['Bar']
+                    else:
+                        d['BAR'] = d['BAR'].fillna(d['Bar'])
+                        try:
+                             mask = (d['BAR'] == "") & (d['Bar'] != "")
+                             d.loc[mask, 'BAR'] = d.loc[mask, 'Bar']
+                        except:
+                             pass
+                
+                # Normalize BAR values (remove .0)
+                if 'BAR' in d.columns:
+                    d['BAR'] = d['BAR'].astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+                
                 # Normalize
                 for col in self.columns:
                     if col not in d.columns:
@@ -217,6 +251,10 @@ class DataManager:
         
         new_row_df = pd.DataFrame([row])
         self.df = pd.concat([self.df, new_row_df], ignore_index=True)
+        # Ensure BAR is filled if Bar was somehow passed (though row construction filters it)
+        # But row is constructed from self.columns, so Bar would be ignored if passed in metadata
+        # unless we explicitly map it.
+        # It's better to assume metadata has "BAR". User input handling should ensure "BAR".
         
         # Save to local persistence
         self._append_to_local(row)

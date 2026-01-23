@@ -109,11 +109,24 @@ class StyleTrainerApp(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object):
         self.footer_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.footer_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=20)
         
+        # Grid for footer buttons
+        self.footer_frame.grid_columnconfigure(0, weight=1)
+        self.footer_frame.grid_columnconfigure(1, weight=1)
+
+        self.btn_vis = ctk.CTkButton(self.footer_frame, text="📊 Visualize Progress", height=50, font=("Arial", 14), fg_color="#555", command=self.open_visualization)
+        self.btn_vis.grid(row=0, column=0, padx=(0, 10), sticky="ew")
+
         self.btn_learn = ctk.CTkButton(self.footer_frame, text="LEARNED", height=50, font=("Arial", 18, "bold"), command=self.on_learn, state="disabled")
-        self.btn_learn.pack(fill="x")
+        self.btn_learn.grid(row=0, column=1, padx=(10, 0), sticky="ew")
         
+        # Status Label below buttons
         self.lbl_status = ctk.CTkLabel(self.footer_frame, text="Ready", text_color="gray")
-        self.lbl_status.pack(pady=5)
+        self.lbl_status.grid(row=1, column=0, columnspan=2, pady=5)
+        
+    def open_visualization(self):
+        from learning_visualizer import LearningVisualizer
+        learning_path = os.path.join("MIDI_learning", "learning_data.xlsx")
+        LearningVisualizer(self, learning_path)
 
     def on_drop(self, event):
         if not event.data: return

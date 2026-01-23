@@ -59,7 +59,7 @@ class MidiHandler:
         # Map analysis result to "inferred_meta" structure expected by Dialog
         inferred_meta = {
             "Category": "", # Still needs some category guessing
-            "Instruments": "", # Will fill with filename in dialog logic usually
+            "Instruments": analysis_result.get('instrument', ''), 
             "Chord": analysis_result.get('chord', ''),
             "Root": analysis_result.get('root', ''),
             "Scale": analysis_result.get('scale', ''),
@@ -72,6 +72,29 @@ class MidiHandler:
             # Internal fields for Learning
             "_raw_ai_result": analysis_result
         }
+        
+        # --- Data-Driven Refinement ---
+        try:
+             from midi_predictor import MidiPredictor
+             learning_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MIDI_learning", "learning_data.xlsx")
+             predictor = MidiPredictor(learning_path)
+             
+             # Extract features to pass
+             features = analysis_result.get('style_features', {})
+             current_filename = os.path.basename(file_path)
+             
+             overrides = predictor.predict(features, current_filename)
+             if overrides:
+                 print(f"Applying Learning Overrides: {overrides}")
+                 inferred_meta.update(overrides)
+                 # Note: Category is not in GT usually? 
+                 # If GT has Category, we could map it. 
+                 # But learning_data.xlsx schema (via style_trainer) currently doesn't seem to save Category explicitly in GT?
+                 # It saves Root, Scale, Chord, TimeSig, Groove, Style.
+                 # So Category guessing logic below still runs, which is fine.
+                 
+        except Exception as e:
+             print(f"Prediction Error: {e}")
 
         # Basic Category Guessing
         avg_pitch = sum(n['pitch'] for n in notes_data) / len(notes_data) if notes_data else 60

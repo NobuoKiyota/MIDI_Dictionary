@@ -25,9 +25,12 @@ class MidiAnalyzer:
             
             # 1. Base Metrics
             result = {}
+            # Check for Drums (Channel 10) OR Filename Heuristic OR Note Pattern Heuristic
+            filename = os.path.basename(file_path).lower()
+            is_filename_drum = "drum" in filename or "perc" in filename
+            is_pattern_drum = self._has_drum_pattern(all_notes)
             
-            # Check for Drums (Channel 10)
-            is_drum_track = any(inst.is_drum for inst in pm.instruments)
+            is_drum_track = any(inst.is_drum for inst in pm.instruments) or is_filename_drum or is_pattern_drum
             
             # Time Signature (Infer from MIDI or default 4/4)
             ts = self._detect_time_signature(pm)
@@ -57,8 +60,8 @@ class MidiAnalyzer:
             # 2. Key & Root Detection
             if is_drum_track:
                 result['root'] = "-"
-                result['scale'] = "Major" # Default placeholder, user requested Key=No which maps to "-"
-                key_info = {'root': "-", 'scale': "Major"}
+                result['scale'] = "Unknown" 
+                key_info = {'root': "-", 'scale': "Unknown"}
             else:
                 key_info = self._detect_key(all_notes)
                 result['root'] = key_info['root']
@@ -84,9 +87,10 @@ class MidiAnalyzer:
             result['style'] = style_data['style']
             result['style_features'] = style_data['features']
             
-            # Category
+            # Category & Instrument
             if is_drum_track:
                 result['Category'] = "Rythem"
+                result['instrument'] = "Standard Drum Kit"
             else:
                 # Basic inference for category if not drums
                 # Heuristic: Bass range? 
@@ -97,6 +101,8 @@ class MidiAnalyzer:
                      result['Category'] = "Chord"
                 else:
                      result['Category'] = "Melody" # Default
+                
+                result['instrument'] = "" # Default empty for melodic
             
             # 6. Generate Comment String
             # Format: "Chord_Beat_Groove" (Style moved to prefix, Tabs removed)
@@ -428,4 +434,51 @@ class MidiAnalyzer:
         # Check consistency of duration
         std_dur = np.std(durations) if durations else 1
         return avg_gap < 0.1 and std_dur < 0.1 and avg_dur > 0.3 and avg_dur < 0.8
+
+    def _has_drum_pattern(self, notes):
+        """
+        Teacher Model logic for Drum Detection based on Note Distribution.
+        Check for rhythmic presence of:
+        - Kick: 36 (C1)
+        - Snare/Clap: 38 (D1), 39 (Ds1), 40 (E1)
+        - Hi-Hats: 42 (Fs1), 44 (Gs1), 46 (As1)
+        - Cymbals: 49 (Cs2), 52 (E2), 55 (G2), 57 (A2)
+        """
+        if not notes: return False
+        
+        pitches = [n.pitch for n in notes]
+        total = len(pitches)
+        if total < 4: return False # Too few notes to judge pattern
+        
+        counts = collections.Counter(pitches)
+        
+        def get_density(target_pitches):
+            c = sum(counts.get(p, 0) for p in target_pitches)
+            return c / total
+            
+        # 1. Check Zones
+        has_kick = get_density([36]) > 0.05
+        has_snare = get_density([38, 39, 40]) > 0.05
+        has_hihat = get_density([42, 44, 46]) > 0.1
+        has_cymbal = get_density([49, 52, 55, 57]) > 0.02
+        
+        # 2. Logic: Drums usually have Kick + (Snare OR HiHat OR Cymbal)
+        # Or just heavy HiHat groove
+        
+        score = 0
+        if has_kick: score += 1
+        if has_snare: score += 1
+        if has_hihat: score += 1
+        if has_cymbal: score += 1
+        
+        # Strong indication if 2+ components are present
+        if score >= 2:
+            return True
+            
+        # Special Case: Solo HiHat groove or Solo Kick?
+        # If > 50% notes are hihats, likely drum loop
+        if get_density([42, 44, 46]) > 0.5:
+            return True
+            
+        return False
 

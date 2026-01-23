@@ -29,5 +29,30 @@
         },
         "corrections_made": true,
         "correction_count": 2
+    },
+    "Durms_8beat_Hat Both6.mid": {
+        "filename": "Durms_8beat_Hat Both6.mid",
+        "hash": "5c1c999604b753c3267b52dd6aae7505",
+        "ground_truth": {
+            "root": "-",
+            "scale": "",
+            "chord": "UnKnown",
+            "time_signature": "4/4",
+            "beat_type": "8beat",
+            "groove": "",
+            "style": ""
+        },
+        "ai_raw_prediction": {
+            "root": "C",
+            "scale": "None",
+            "chord": "",
+            "time_signature": "4/4",
+            "beat_type": "8beat",
+            "groove": "",
+            "style": ""
+        },
+        "internal_features": {},
+        "corrections_made": true,
+        "correction_count": 2
     }
 }

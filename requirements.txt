@@ -6,3 +6,5 @@ numpy
 customtkinter
 tkinterdnd2
 pygame
+seaborn
+matplotlib

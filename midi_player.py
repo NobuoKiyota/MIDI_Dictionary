@@ -45,7 +45,7 @@ class MidiPlayer:
              
         # Create temp file with overridden instruments
         try:
-            play_path = self._create_preview_midi(file_path, program_num)
+            play_path = self._create_preview_midi(file_path, program_num, instrument_text)
             print(f"DEBUG: Created preview midi at: {play_path}")
         except Exception as e:
             print(f"Error creating preview midi: {e}")
@@ -72,11 +72,18 @@ class MidiPlayer:
             return pygame.mixer.music.get_busy()
         return False
 
-    def _create_preview_midi(self, src_path, program_number):
+    def _create_preview_midi(self, src_path, program_number, instrument_text=None):
         pm = pretty_midi.PrettyMIDI(src_path)
         
+        # Check if user requested Drums specifically
+        force_drums = (instrument_text == "Standard Drum Kit")
+        
         for inst in pm.instruments:
-            if not inst.is_drum:
+            if force_drums:
+                inst.is_drum = True
+                inst.program = 0 # Standard Kit usually 0 on Ch 10
+                print(f"DEBUG: Forcing Drums for {inst.name}")
+            elif not inst.is_drum:
                 old_prog = inst.program
                 inst.program = program_number
                 print(f"DEBUG: Rewriting Instrument {inst.name} (Prog {old_prog}) -> Prog {inst.program}")

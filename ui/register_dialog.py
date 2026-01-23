@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QDialog, QFormLayout, QComboBox, QLineEdit, QDialogButtonBox, QLabel
+from PySide6.QtWidgets import QDialog, QFormLayout, QComboBox, QLineEdit, QDialogButtonBox, QLabel, QVBoxLayout, QGridLayout
 import ui_constants as C
 
 class RegistrationDialog(QDialog):
@@ -8,147 +8,170 @@ class RegistrationDialog(QDialog):
         self.resize(400, 360)
         self.data = initial_data or {}
         
-        self.layout = QFormLayout(self)
+    def __init__(self, parent=None, initial_data=None):
+        super().__init__(parent)
+        self.setWindowTitle("Register MIDI & Train AI")
+        self.resize(650, 600)
+        self.data = initial_data or {}
         
+        # Main Layout
+        main_layout = QVBoxLayout(self)
+        
+        
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        main_layout.addLayout(grid)
+        
+        # Headers
+        headers = ["Parameter", "AI Prediction", "User Correction (Entry/Edit)"]
+        colors = ["white", "#4da6ff", "#ff9933"] # StyleTrainer colors
+        
+        for col, (text, color) in enumerate(zip(headers, colors)):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {color};")
+            grid.addWidget(lbl, 0, col)
+            
+        self.widgets = {} # Store user widgets
         inferred = self.data.get("inferred_meta", {})
         
-        # 1. File Name
-        self.name_edit = QLineEdit(self.data.get("filename", ""))
-        self.layout.addRow("File Name:", self.name_edit)
+        # Helper to add row
+        row_idx = 1
+        def add_row(label, ai_val, user_widget):
+            nonlocal row_idx
+            # Label
+            grid.addWidget(QLabel(label), row_idx, 0)
+            
+            # AI Label (Readonly Entry style)
+            ai_edit = QLineEdit(str(ai_val))
+            ai_edit.setReadOnly(True)
+            ai_edit.setStyleSheet("color: #aaa; background-color: #2b2b2b; border: 1px solid #444;")
+            grid.addWidget(ai_edit, row_idx, 1)
+            
+            # User Widget
+            grid.addWidget(user_widget, row_idx, 2)
+            row_idx += 1
+
+        # --- Fields ---
         
-        # 2. Key (Root) - User requested "Key", stored as "Root"
+        # 1. File Name
+        # Logic: Combined AI Proposal + Original
+        # AI Col: The Pure "Auto Name"
+        # User Col: The Combined Text (for editing)
+        original_name = self.data.get("filename", "")
+        
+        # Re-calc auto name for display
+        style_val = inferred.get("Style", "")
+        inst_val = inferred.get("Instruments", "")
+        # Note: Instrument might vary if user changes combobox? 
+        # But here we show INITIAL AI thought.
+        
+        # We need to construct the AI name based on INFERRED RAW data effectively.
+        # inferred dict has keys from midi_utils mapping.
+        
+        parts = []
+        if style_val: parts.append(style_val)
+        parts.append(inst_val if inst_val else "Unknown")
+        suffix = inferred.get("CommentSuffix", "")
+        if suffix: parts.append(suffix)
+        ai_filename = "_".join(parts)
+        
+        self.name_edit = QLineEdit()
+        # User Request: Original Name Only (AI Name is in column 1)
+        self.name_edit.setText(original_name)
+             
+        add_row("File Name", ai_filename, self.name_edit)
+        
+        # 2. Key
         self.root_combo = QComboBox()
         self.root_combo.addItems(C.KEY_LIST)
-        
-        root_val = inferred.get("Root", self.data.get("root", "-"))
-        if root_val == "No": root_val = "-" 
-        
-        # If value not in list (e.g. "C#"), map to "Cs" if needed?
-        # User defined list: Cs, Ds... 
-        # But MidiAnalyzer might output "C#".
-        # Mapping logic:
-        if "#" in str(root_val):
-            root_val = str(root_val).replace("#", "s")
-            
+        root_val = inferred.get("Root", "-") # Current best guess
+        if root_val == "No": root_val = "-"
+        if "#" in str(root_val): root_val = str(root_val).replace("#", "s")
         self.root_combo.setCurrentText(root_val if root_val in C.KEY_LIST else "-")
-        self.layout.addRow("Key:", self.root_combo)
         
-        # 2b. Scale
+        add_row("Key (Root)", inferred.get("Root", "-"), self.root_combo)
+        
+        # 3. Scale
         self.scale_combo = QComboBox()
         self.scale_combo.addItems(["Major", "Minor", "Dorian", "Mixolydian", "Lydian", "Phrygian", "Locrian", "Unknown"])
         scale_val = inferred.get("Scale", "Major")
-        self.scale_combo.setCurrentText(scale_val if scale_val else "Major")
-        self.layout.addRow("Scale:", self.scale_combo)
+        self.scale_combo.setCurrentText(scale_val)
         
-        # 3. Category
+        add_row("Scale", scale_val, self.scale_combo)
+        
+        # 4. Category
         self.category_combo = QComboBox()
         self.category_combo.addItems(C.CATEGORY_LIST)
         cat_val = inferred.get("Category", "Rythem")
         self.category_combo.setCurrentText(cat_val if cat_val in C.CATEGORY_LIST else "Rythem")
-        self.layout.addRow("Category:", self.category_combo)
         
-        # 4. Instruments
+        add_row("Category", cat_val, self.category_combo)
+        
+        # 5. Instruments
         self.instruments_combo = QComboBox()
         self.instruments_combo.addItems(C.INSTRUMENT_LIST)
-        inst_list = C.INSTRUMENT_LIST # Restore variable for fuzzy logic below
         
-        # Default selection logic
-        def_inst = self.data.get("filename", "")
-        # Try to find a match in filename or meta?
-        # User said "Instrument to be selectable".
-        # If inferred meta has something useful, use it.
-        # Otherwise, default to Piano? Or try to fuzzy match filename?
+        # Selection Logic (Pre-filled)
+        def_inst = original_name
+        inferred_inst = inferred.get("Instruments", "")
         
-        # Let's try to match inferred "Category" or just Piano
-        # Or if "Instruments" was passed in data (from file?) -> data["filename"] is usually just filename.
-        # Let's default to "Acoustic Grand Piano" (0)
-        self.instruments_combo.setCurrentText("Acoustic Grand Piano")
+        target_inst = "Acoustic Grand Piano"
+        if inferred_inst and inferred_inst in C.INSTRUMENT_LIST:
+            target_inst = inferred_inst
+        elif not inferred_inst:
+             for name in C.INSTRUMENT_LIST:
+                if name.lower() in def_inst.lower():
+                    target_inst = name
+                    break
+        self.instruments_combo.setCurrentText(target_inst)
         
-        # If there is a hint in filename (e.g. "bass"), try to select it
-        lower_name = def_inst.lower()
-        for name in inst_list:
-            if name.lower() in lower_name:
-                self.instruments_combo.setCurrentText(name)
-                break
-                
-        self.layout.addRow("Instruments:", self.instruments_combo)
+        add_row("Instruments", inferred_inst, self.instruments_combo)
         
-        # 5. Time Signature
-        self.ts_edit = QLineEdit(self.data.get("time_signature", "4/4")) 
-        self.layout.addRow("Time Signature:", self.ts_edit)
+        # 6. Time Sig
+        self.ts_edit = QLineEdit(self.data.get("time_signature", "4/4"))
+        add_row("Time Signature", inferred.get("TimeSignature", "4/4"), self.ts_edit)
         
-        # 6. Bar Length
+        # 7. Bar
         self.bar_edit = QLineEdit(str(self.data.get("duration_bars", "4")))
-        self.layout.addRow("Bar Length:", self.bar_edit)
+        add_row("Bar Length", inferred.get("DurationBars", "4"), self.bar_edit)
         
-        # 7. Chord
+        # 8. Chord
         self.chord_combo = QComboBox()
-        # Use shared list from ui_constants
         self.chord_combo.addItems(C.CHORD_LIST)
-        # Map specific chord string to general category if needed, or just standard names
         chord_val = inferred.get("Chord", "None")
-        # Try to match fuzzy or exact
-        found_idx = self.chord_combo.findText(chord_val) # exact match
-        if found_idx >= 0:
-            self.chord_combo.setCurrentIndex(found_idx)
+        found_idx = self.chord_combo.findText(chord_val)
+        if found_idx >= 0: self.chord_combo.setCurrentIndex(found_idx)
         else:
-            # If not exact match (e.g. CmM7), maybe default to "MinorTension"?
-            # For now just set text if editable? Combo is typically fixed list here.
-            # Let's try to map common ones.
-            if "m" in chord_val:
-                self.chord_combo.setCurrentText("minor")
-            elif "7" in chord_val:
-                self.chord_combo.setCurrentText("7th")
-            else:
-                 self.chord_combo.setCurrentText("None")
-        self.layout.addRow("Chord:", self.chord_combo)
+            if "m" in chord_val: self.chord_combo.setCurrentText("minor")
+            elif "7" in chord_val: self.chord_combo.setCurrentText("7th")
+            else: self.chord_combo.setCurrentText("None")
+            
+        add_row("Chord", chord_val, self.chord_combo)
         
-        # 7b. Groove (Artic)
+        # 9. Groove
         self.groove_edit = QLineEdit(inferred.get("Groove", ""))
         self.groove_edit.setPlaceholderText("Straight if empty")
-        self.layout.addRow("Groove:", self.groove_edit)
-
-        # 7c. Style
+        add_row("Groove", inferred.get("Groove", "Straight"), self.groove_edit)
+        
+        # 10. Style
         self.style_edit = QLineEdit(inferred.get("Style", ""))
-        self.layout.addRow("Style:", self.style_edit)
+        add_row("Style", inferred.get("Style", ""), self.style_edit)
         
-        # 8. Group
+        # 11. Group (No AI usually)
         self.group_edit = QLineEdit("")
-        self.layout.addRow("Group:", self.group_edit)
+        add_row("Group", "-", self.group_edit)
         
-        # 9. Comment
+        # 12. Comment
         self.comment_edit = QLineEdit("")
-        self.layout.addRow("Comment:", self.comment_edit)
+        add_row("Comment", "-", self.comment_edit)
         
-        # Auto-Generate Filename from Metadata
-        # Format: "Style_Instruments_Chord_Beat_Groove" (Style moved to prefix)
-        suffix = inferred.get("CommentSuffix", "")
-        inst_name = self.instruments_combo.currentText()
-        if not inst_name:
-            inst_name = self.category_combo.currentText()
-            
-        # User Request: Prefix should include midi block name (interpreted as Style)
-        # Suffix internal parts were modified in analyzer to remove Style
-        style_val = inferred.get("Style", "")
-        
-        # Build Name
-        parts = []
-        if style_val:
-            parts.append(style_val)
-            
-        parts.append(inst_name)
-        
-        if suffix:
-            parts.append(suffix)
-            
-        auto_name = "_".join(parts)
-        self.name_edit.setText(auto_name)
+        main_layout.addStretch()
         
         # Buttons
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
-        self.layout.addRow(self.buttons)
+        main_layout.addWidget(self.buttons)
 
     def get_metadata(self):
         inferred = self.data.get("inferred_meta", {})

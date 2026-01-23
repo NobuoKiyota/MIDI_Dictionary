@@ -198,7 +198,11 @@ class FilterPanel(QWidget):
         for title, group in self.groups.items():
             btn = group.checkedButton()
             if btn:
-                current_filters[title] = btn.text()
+                val = btn.text()
+                # Special handling for BAR: strip "BAR" suffix to match numeric data
+                if title == "BAR":
+                    val = val.replace("BAR", "")
+                current_filters[title] = val
             else:
                 current_filters[title] = None
         
