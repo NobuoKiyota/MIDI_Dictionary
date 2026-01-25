@@ -14,7 +14,7 @@ if __package__ is None or __package__ == '':
     from registries import CHORD_REGISTRY, STYLE_REGISTRY
     import chord_strategies # Triggers registration
     import style_strategies # Triggers registration
-    from style_strategies import load_arp_catalog, ExternalArpStyle
+    from style_strategies import load_style_catalog, ExternalStyleStrategy
     from midi_analyzer import MidiAnalyzer
 else:
     from .constants import NOTE_NAMES, get_note_name
@@ -22,7 +22,7 @@ else:
     from .registries import CHORD_REGISTRY, STYLE_REGISTRY
     from . import chord_strategies
     from . import style_strategies
-    from .style_strategies import load_arp_catalog, ExternalArpStyle
+    from .style_strategies import load_style_catalog, ExternalStyleStrategy
     from .midi_analyzer import MidiAnalyzer
 
 # --- Presets ---
@@ -36,12 +36,13 @@ PRESETS = {
 
 def register_external_styles(registry):
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    excel_path = os.path.join(script_dir, "arpeggio_patterns.xlsx")
-    external_styles = load_arp_catalog(excel_path)
+    excel_path = os.path.join(script_dir, "ensemble_styles.xlsx")
+    external_styles = load_style_catalog(excel_path)
     
-    for name, data in external_styles.items():
+    for name, voices_data in external_styles.items():
         # Store as lambda to act as a factory
-        registry[name] = lambda d=data: ExternalArpStyle(d)
+        # We need default argument to capture value in closure
+        registry[name] = lambda d=voices_data: ExternalStyleStrategy(d)
         print(f"Registered External Style: {name}")
 
 # Initialize Registry
@@ -228,7 +229,25 @@ class EnsembleGenerator:
              self.analyzer = MidiAnalyzer(midi_data)
         
         analysis = self.analyzer.analyze()
-        beat_groups = self.group_by_beat(analysis, self.analyzer.beats)
+        
+        # FIX for missing last beat:
+        # pretty_midi.get_beats() sometimes omits the final timestamp if it aligns exactly with end.
+        beats = list(self.analyzer.beats)
+        if analysis and beats:
+             end_time = analysis[-1].note.end
+             if beats[-1] < end_time - 0.01:
+                 # Estimate beat duration
+                 beat_dur = 0.5
+                 if len(beats) > 1:
+                     beat_dur = beats[-1] - beats[-2]
+                 
+                 # Append beats until we cover end_time
+                 next_beat = beats[-1] + beat_dur
+                 while next_beat <= end_time + 0.01:
+                     beats.append(next_beat)
+                     next_beat += beat_dur
+
+        beat_groups = self.group_by_beat(analysis, beats)
 
         # --- Generation ---
         required_chords = set(c for c, s in target_combinations)
@@ -267,13 +286,21 @@ class EnsembleGenerator:
                     'end': group['end'],
                     'chord_notes': voiced_chord,
                     'notes': notes, 
-                    'velocity': vel
+                    'velocity': vel,
+                    'root_pitch': root_pitch # Added for extended step logic
                 })
             
             merged_events = self.merge_events(beat_events)
             beat_events_cache[chord_name] = (beat_events, merged_events)
 
         for chord_name, style_name in target_combinations:
+            # [TEMPORARY] User requested to only generate Diatonic_7th mixed with Arpeggio styles (Excel or Internal)
+            # We exclude non-arp styles like Pad and Rhythm.
+            if chord_name != "Diatonic_7th":
+                continue
+            if style_name in ["Pad", "Rhythm"]:
+                continue
+
             if chord_name not in beat_events_cache: continue
             if style_name not in STYLE_REGISTRY: 
                 print(f"Warning: Style '{style_name}' not found.")
@@ -305,7 +332,9 @@ class EnsembleGenerator:
                 start = event['start']
                 end = event['end']
                 chord_notes = event['chord_notes']
+                chord_notes = event['chord_notes']
                 velocity_base = event['velocity']
+                root_pitch = event.get('root_pitch', None) # Get root pitch
                 
                 if use_bass_rhythm:
                     for ana in event['notes']:
@@ -320,7 +349,7 @@ class EnsembleGenerator:
                                 sorted_c = sorted(current_chord)
                                 current_chord = [sorted_c[0], sorted_c[1]]
                         
-                        generated = style_strategy.apply(current_chord, note, velocity_scale, midi_data)
+                        generated = style_strategy.apply(current_chord, note, velocity_scale, midi_data, root_pitch=root_pitch)
                         new_inst.notes.extend(generated)
                 else:
                     dummy_note = pretty_midi.Note(
@@ -329,7 +358,7 @@ class EnsembleGenerator:
                         start=start,
                         end=end
                     )
-                    generated = style_strategy.apply(chord_notes, dummy_note, velocity_scale, midi_data)
+                    generated = style_strategy.apply(chord_notes, dummy_note, velocity_scale, midi_data, root_pitch=root_pitch)
                     new_inst.notes.extend(generated)
             
             self.humanize(new_inst.notes)

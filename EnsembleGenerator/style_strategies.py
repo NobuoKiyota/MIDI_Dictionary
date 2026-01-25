@@ -3,253 +3,169 @@ import random
 import os
 import pandas as pd
 from registries import register_style
-from base_strategies import StyleStrategy
+# Removed: from base_strategies import StyleStrategy
 from utils import get_tempo_at_time
 
-@register_style("Pad")
-class PadStyle(StyleStrategy):
-    def apply(self, chord_notes, bass_note, velocity_scale=1.0, midi_data=None):
-        notes = []
-        vel = int(bass_note.velocity * velocity_scale)
-        vel = max(0, min(127, vel))
-        for pitch in chord_notes:
-            notes.append(pretty_midi.Note(
-                velocity=vel,
-                pitch=pitch,
-                start=bass_note.start,
-                end=bass_note.end
-            ))
-        return notes
+# New StyleStrategy base class definition
+# New StyleStrategy base class definition
+class StyleStrategy:
+    def apply(self, chord_notes, bass_note, velocity_scale=1.0, midi_data=None, root_pitch=None):
+        raise NotImplementedError
 
-@register_style("Rhythm")
-class RhythmStyle(StyleStrategy):
-    def apply(self, chord_notes, bass_note, velocity_scale=1.0, midi_data=None):
-        if bass_note.velocity < 100:
-            return []
-        
-        notes = []
-        vel = int(bass_note.velocity * velocity_scale)
-        vel = max(0, min(127, vel))
-        for pitch in chord_notes:
-            notes.append(pretty_midi.Note(
-                velocity=vel,
-                pitch=pitch,
-                start=bass_note.start,
-                end=bass_note.end
-            ))
-        return notes
+# --- Extended Step Logic Constants ---
+INTERVAL_RULES = {
+    "Major": [4, 3, 5],
+    "Minor": [3, 4, 5],
+    "M7": [4, 3, 4, 1],
+    "m7": [3, 4, 3, 2],
+    "7th": [4, 3, 3, 2],
+    "dim": [3, 3, 3, 3],
+    "aug": [4, 4, 4],
+    "Default": [4, 3, 5] 
+}
 
-class BaseArpStyle(StyleStrategy):
+class ExternalStyleStrategy(StyleStrategy):
     """
-    Base class for Arpeggiators with dynamic patterns and timing.
+    Unified Style Strategy defined by external Excel data (Row based).
+    Supports multiple voices (layers) and extended step lengths (32+).
     """
-    def get_pattern(self):
-        return [0, 1, 2] # Default Up
+    def __init__(self, voices_data):
+        # voices_data is a list of dicts: {'voice': 1, 'type': 'seq', 'data': [...], 'swing': 0.0} ...
+        # We need to organize by voice index for playback
+        self.voices = {}
+        for row in voices_data:
+            v_idx = row['voice']
+            if v_idx not in self.voices:
+                self.voices[v_idx] = {'seq': [], 'gate': [], 'vel': [], 'swing': 0.0}
+            
+            p_type = row['type']
+            if p_type == 'seq':
+                self.voices[v_idx]['seq'] = row['data']
+                self.voices[v_idx]['swing'] = row['swing']
+            elif p_type == 'gate':
+                self.voices[v_idx]['gate'] = row['data']
+            elif p_type == 'vel':
+                self.voices[v_idx]['vel'] = row['data']
+
+    def _detect_chord_type(self, chord_notes, root_pitch):
+        if not chord_notes or not root_pitch: return "Default"
+        intervals = sorted([ (p - root_pitch) % 12 for p in chord_notes ])
+        s_int = set(intervals)
         
-    def get_gate_ratio(self):
-        return 1.0 # 100% Legato
-        
-    def get_timing_offset(self):
-        return 0.0 # Seconds
-    
-    def get_velocity(self, base_vel, beat_position, note_index):
-        return base_vel
-        
-    def apply(self, chord_notes, bass_note, velocity_scale=1.0, midi_data=None):
-        notes = []
-        base_vel = int(bass_note.velocity * velocity_scale)
-        base_vel = max(0, min(127, base_vel))
-        
-        start = bass_note.start
-        end = bass_note.end
-        current_time = start
-        
-        pattern = self.get_pattern()
+        if {0, 4, 7, 11}.issubset(s_int): return "M7"
+        if {0, 3, 7, 10}.issubset(s_int): return "m7"
+        if {0, 4, 7, 10}.issubset(s_int): return "7th"
+        if {0, 3, 6}.issubset(s_int): return "dim"
+        if {0, 4, 8}.issubset(s_int): return "aug"
+        if {0, 3, 7}.issubset(s_int): return "Minor"
+        if {0, 4, 7}.issubset(s_int): return "Major"
+        return "Default"
+
+    def _get_pitch_from_step(self, step_val, root_pitch, chord_type):
+        if root_pitch is None: return 60 
+        rule = INTERVAL_RULES.get(chord_type, INTERVAL_RULES["Default"])
+        current_pitch = root_pitch
+        steps_remaining = step_val
         idx = 0
-        
-        while current_time < end:
-            # 1. Tempo Sync
-            bpm = 120.0
-            if midi_data:
-                bpm = get_tempo_at_time(midi_data, current_time)
-            
-            beat_dur = 60.0 / bpm
-            step_dur = beat_dur / 4.0 # 16th note
-            
-            # 2. Garbage Check
-            remaining = end - current_time
-            if remaining < step_dur * 0.5:
-                break
-                
-            # 3. Determine Pitch using Pattern
-            # Wrap pattern index
-            pat_idx = idx % len(pattern)
-            # Wrap chord note index
-            note_idx = pattern[pat_idx] % len(chord_notes) 
-            pitch = chord_notes[note_idx]
-            
-            # 4. Calculate Timing with Offset
-            onset = current_time + self.get_timing_offset()
-            if onset >= end: break # Offset pushed out of bounds
-            
-            # 5. Calculate Duration with Gate
-            gate = self.get_gate_ratio()
-            duration = step_dur * gate
-            note_end = min(onset + duration, end)
-            
-            if note_end - onset > 0.01:
-                # 6. Calculate Velocity
-                vel = self.get_velocity(base_vel, idx % 4, note_idx)
-                vel = max(1, min(127, int(vel)))
-                
-                notes.append(pretty_midi.Note(
-                    velocity=vel,
-                    pitch=pitch,
-                    start=onset,
-                    end=note_end
-                ))
-            
-            current_time += step_dur
+        while steps_remaining > 0:
+            interval = rule[idx % len(rule)]
+            current_pitch += interval
+            steps_remaining -= 1
             idx += 1
-            
-        return notes
+        return current_pitch
 
-@register_style("Arp") # Legacy Simple Up (Default)
-class SimpleArpStyle(BaseArpStyle):
-    pass
-
-@register_style("Arp_Trance")
-class TranceArpStyle(BaseArpStyle):
-    def get_pattern(self):
-        # Up-Down-Up 8-step: 0 1 2 1 0 1 2 3 (requires 4 notes)
-        return [0, 1, 2, 1, 0, 1, 2, 3] 
-        
-    def get_gate_ratio(self):
-        return 0.6 # Staccato
-        
-    def get_velocity(self, base_vel, beat_step, note_index):
-        if beat_step == 2:
-            return base_vel * 1.2
-        return base_vel
-
-@register_style("Arp_LoFi")
-class LoFiArpStyle(BaseArpStyle):
-    def get_pattern(self):
-        return [0, 2, 3, 1]
-        
-    def get_gate_ratio(self):
-        return 0.95
-        
-    def get_timing_offset(self):
-        return random.uniform(0.03, 0.05)
-        
-    def get_velocity(self, base_vel, beat_step, note_index):
-        return base_vel * 0.7
-
-@register_style("Arp_Healing")
-class HealingArpStyle(BaseArpStyle):
-    def get_pattern(self):
-        return [0, 1, 2] 
-        
-    def get_gate_ratio(self):
-        return 2.0 # Overlap/Pedal
-        
-    def get_velocity(self, base_vel, beat_step, note_index):
-        return base_vel * 0.8
-
-class ExternalArpStyle(BaseArpStyle):
-    """
-    Arpeggiator style defined by external Excel data (Column based).
-    """
-    def __init__(self, data):
-        self.data = data
-        super().__init__()
-
-    def apply(self, chord_notes, bass_note, velocity_scale=1.0, midi_data=None):
+    def apply(self, chord_notes, bass_note, velocity_scale=1.0, midi_data=None, root_pitch=None):
         if not chord_notes: return []
         
-        notes = []
+        all_notes = []
         base_start = bass_note.start
         end = bass_note.end
-        current_time = base_start
         
-        sequence = self.data['sequence']
-        gate_ratios = self.data['gate_ratios']
-        velocity_mults = self.data['velocity_mults']
-        swing_amount = self.data['swing']
+        bpm = 120.0
+        if midi_data:
+            bpm = get_tempo_at_time(midi_data, base_start)
         
-        step_idx = 0
+        beat_dur = 60.0 / bpm
+        step_dur = beat_dur / 4.0 # 16th note
         
-        while current_time < end:
-            # 1. Sync Tempo
-            bpm = 120.0
-            if midi_data:
-                bpm = get_tempo_at_time(midi_data, current_time)
-            
-            beat_dur = 60.0 / bpm
-            step_dur = beat_dur / 4.0 # 16th note
-            
-            # 2. Garbage Check
-            remaining = end - current_time
-            if remaining < step_dur * 0.5:
-                break
-                
-            # 3. Get Pattern Step Data
-            seq_val_str = sequence[step_idx % 16]
-            gate = gate_ratios[step_idx % 16]
-            vel_mult = velocity_mults[step_idx % 16]
-            
-            timing_offset = 0.0
-            if (step_idx % 2) == 1: 
-                timing_offset += swing_amount
+        global_step_offset = int(round(base_start / step_dur))
+        loop_steps = int((end - base_start) / step_dur) + 2
+        
+        chord_type = self._detect_chord_type(chord_notes, root_pitch)
 
-            # 4. Parse Sequence & Generate
-            if str(seq_val_str) != '-1' and str(seq_val_str) != '':
-                val_clean = str(seq_val_str).replace('&', ',').replace('+', ',').replace(' ', ',')
-                indices = [s.strip() for s in val_clean.split(',') if s.strip()]
+        # Iterate through VOICES
+        for v_idx, voice_data in self.voices.items():
+            sequence = voice_data['seq']
+            gate_data = voice_data['gate']
+            vel_data = voice_data['vel']
+            swing_amount = voice_data['swing']
+            
+            # Safety check for lengths
+            seq_len = len(sequence)
+            if seq_len == 0: continue
+
+            for i in range(loop_steps):
+                abs_step_idx = global_step_offset + i
+                grid_onset = abs_step_idx * step_dur
                 
-                strum_idx = 0
-                for idx_str in indices:
-                    try:
-                        idx_val = int(float(idx_str)) 
-                        
-                        # Octave Wrapping
-                        num_notes = len(chord_notes)
-                        note_idx = idx_val % num_notes
-                        octave_shift = idx_val // num_notes
-                        
-                        base_pitch = chord_notes[note_idx]
-                        final_pitch = base_pitch + (octave_shift * 12)
-                        
-                        strum_delay = strum_idx * 0.005
-                        onset = current_time + timing_offset + strum_delay
-                        
-                        if onset < end:
-                            duration = step_dur * gate
-                            note_end = min(onset + duration, end)
+                if grid_onset < base_start - 0.01: continue
+                if grid_onset >= end - 0.01: break
+                
+                # Sequence Lookup (Modulo Length)
+                seq_idx = abs_step_idx % seq_len
+                
+                # Safe Access
+                seq_val_str = sequence[seq_idx] if seq_idx < len(sequence) else '-1'
+                
+                # Gate & Vel
+                # Note: Excel inputs 10 -> 1.0. We divide by 10.0 here or in loader?
+                # Let's do it in Loader for consistency. Assuming data is already scaled in Loader.
+                gate = gate_data[seq_idx] if seq_idx < len(gate_data) else 1.0
+                vel_mult = vel_data[seq_idx] if seq_idx < len(vel_data) else 1.0
+                
+                timing_offset = 0.0
+                if (abs_step_idx % 2) == 1: 
+                    timing_offset += swing_amount
+
+                if str(seq_val_str) != '-1' and str(seq_val_str) != '':
+                    if True: 
+                         print(f"DEBUG: V{v_idx} Step {abs_step_idx} | Seq:'{seq_val_str}' G:{gate:.2f}")
+
+                    val_clean = str(seq_val_str).replace('&', ',').replace('+', ',').replace(' ', ',')
+                    indices = [s.strip() for s in val_clean.split(',') if s.strip()]
+                    
+                    strum_idx = 0
+                    for idx_str in indices:
+                        try:
+                            idx_val = int(float(idx_str)) 
+                            final_pitch = self._get_pitch_from_step(idx_val, root_pitch, chord_type)
                             
-                            if note_end - onset > 0.01:
-                                vel = bass_note.velocity * velocity_scale * vel_mult
-                                vel = max(1, min(127, int(vel)))
+                            strum_delay = strum_idx * 0.005
+                            onset = grid_onset + timing_offset + strum_delay
+                            
+                            if onset < end:
+                                duration = step_dur * gate
+                                note_end = onset + duration 
                                 
-                                notes.append(pretty_midi.Note(
-                                    velocity=vel,
-                                    pitch=final_pitch,
-                                    start=onset,
-                                    end=note_end
-                                ))
-                        strum_idx += 1
-                    except ValueError:
-                        pass
-            
-            current_time += step_dur
-            step_idx += 1
-            
-        return notes
+                                if duration > 0.001:
+                                    vel = bass_note.velocity * velocity_scale * vel_mult
+                                    vel = max(1, min(127, int(vel)))
+                                    
+                                    all_notes.append(pretty_midi.Note(
+                                        velocity=vel,
+                                        pitch=final_pitch,
+                                        start=onset,
+                                        end=note_end
+                                    ))
+                            strum_idx += 1
+                        except ValueError:
+                            pass
+                            
+        return all_notes
 
-def load_arp_catalog(file_path="arpeggio_patterns.xlsx"):
+def load_style_catalog(file_path="ensemble_styles.xlsx"):
     if not os.path.exists(file_path):
-        print(f"Warning: Arpeggio catalog not found at {file_path}")
+        print(f"Warning: Style catalog not found at {file_path}")
         return {}
     
     try:
@@ -261,60 +177,60 @@ def load_arp_catalog(file_path="arpeggio_patterns.xlsx"):
         df.columns = df.columns.str.strip()
         catalog = {}
         
+        # New Schema: style_name, voice, type, 01..32, swing
+        # We need to iterate and group.
+        
         for index, row in df.iterrows():
             try:
                 name = row['style_name']
                 if pd.isna(name): continue
-
+                
+                voice = int(row.get('voice', 1))
+                p_type = row.get('type', 'seq')
                 swing = float(row.get('swing', 0.0)) if not pd.isna(row.get('swing')) else 0.0
                 
-                sequence = []
-                gate_ratios = []
-                velocity_mults = []
-                
-                for i in range(1, 17):
-                    s_key = f"s{i:02}"
-                    g_key = f"g{i:02}"
-                    v_key = f"v{i:02}"
-                    
-                    # Sequence
-                    val_s = row.get(s_key, 'r')
-                    s_str = str(val_s).strip().lower()
-                    if s_str == 'r' or s_str == '-1' or s_str == '' or s_str == 'nan':
-                        final_s = '-1'
+                # Extract 01..32
+                data_list = []
+                # Detect max columns (dynamic?) Or fixed 32? User said 1..32.
+                # Let's iterate 1..64 safely?
+                for i in range(1, 65):
+                    col_key = f"{i:02}"
+                    if col_key in df.columns:
+                        val = row[col_key]
+                        
+                        # Process value based on type
+                        if pd.isna(val) or val == '':
+                            if p_type == 'seq': val = '-1'
+                            else: val = 10 # Default for gate/vel
+                        
+                        if p_type == 'seq':
+                            data_list.append(str(val))
+                        else:
+                            # Scale Gate/Vel by 10.0
+                            try:
+                                data_list.append(float(val) / 10.0)
+                            except:
+                                data_list.append(1.0)
                     else:
-                        final_s = s_str
-                    sequence.append(final_s)
-                    
-                    # Gate
-                    try:
-                        val_g = row.get(g_key, 10)
-                        if pd.isna(val_g): val_g = 10
-                        gate_ratios.append(float(val_g) / 10.0)
-                    except ValueError:
-                        print(f"Warning: Invalid Gate at {name} col {g_key}. Defaulting to 1.0")
-                        gate_ratios.append(1.0)
-                    
-                    # Velocity
-                    try:
-                        val_v = row.get(v_key, 10)
-                        if pd.isna(val_v): val_v = 10
-                        velocity_mults.append(float(val_v) / 10.0)
-                    except ValueError:
-                        print(f"Warning: Invalid Velocity at {name} col {v_key}. Defaulting to 1.0")
-                        velocity_mults.append(1.0)
-                    
-                catalog[name] = {
-                    'sequence': sequence,
-                    'gate_ratios': gate_ratios,
-                    'velocity_mults': velocity_mults,
+                        break # End of columns
+                
+                row_data = {
+                    'style_name': name,
+                    'voice': voice,
+                    'type': p_type,
+                    'data': data_list,
                     'swing': swing
                 }
+                
+                if name not in catalog:
+                    catalog[name] = []
+                catalog[name].append(row_data)
+                
             except Exception as e:
-                print(f"Error parsing row {index} ({row.get('style_name', 'Unknown')}): {e}")
+                print(f"Error parsing row {index}: {e}")
                 continue
                 
         return catalog
     except Exception as e:
-        print(f"Critical Error loading arpeggio catalog: {e}")
+        print(f"Critical Error loading style catalog: {e}")
         return {}
