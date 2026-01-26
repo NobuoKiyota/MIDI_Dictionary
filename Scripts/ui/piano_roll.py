@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QPushButton, QHBoxLayout, QLabel, QFrame
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QDrag, QFont
 from PySide6.QtCore import Qt, Signal, QMimeData, QSize, QUrl, QPoint
+import os
 
 class PianoRollCanvas(QWidget):
     hoverChanged = Signal(str) # New Signal
@@ -237,7 +238,11 @@ class DraggableButton(QPushButton):
         self.drag_start_pos = QPoint()
 
     def set_file_path(self, path):
-        self.file_path = path
+        if path:
+            self.file_path = os.path.abspath(path)
+            print(f"[DEBUG] DraggableButton Path Set (Abs): {self.file_path}")
+        else:
+            self.file_path = None
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -253,12 +258,16 @@ class DraggableButton(QPushButton):
         if (event.pos() - self.drag_start_pos).manhattanLength() < 10: 
             return
 
+        print(f"[DEBUG] Drag attempting. File: {self.file_path}")
         drag = QDrag(self)
         mime = QMimeData()
         url = QUrl.fromLocalFile(self.file_path)
+        print(f"[DEBUG] URL created: {url.toString()}")
         mime.setUrls([url])
         drag.setMimeData(mime)
-        drag.exec_(Qt.CopyAction)
+        print("[DEBUG] Executing Drag...")
+        result = drag.exec(Qt.CopyAction)
+        print(f"[DEBUG] Drag finished with result: {result}")
 
 class PianoRollWidget(QWidget):
     fileDropped = Signal(str)

@@ -157,4 +157,4 @@ class FileListWidget(QTableWidget):
         
         drag = QDrag(self)
         drag.setMimeData(mime)
-        drag.exec_(supportedActions)
+        drag.exec(supportedActions)
