@@ -195,7 +195,7 @@ class EnsembleGenerator:
         merged.append(current)
         return merged
 
-    def generate(self, input_path, velocity_scale=0.9, key_arg=None, chord_filter=None, style_filter=None, preset_name=None, output_subdir=None, expansion_flags=None, strict_validation=False, allowed_types=None, stop_event=None):
+    def generate(self, input_path, velocity_scale=0.9, key_arg=None, chord_filter=None, style_filter=None, preset_name=None, output_subdir=None, expansion_flags=None, strict_validation=False, allowed_types=None, timing_jitter=0.01, stop_event=None):
         midi_data = self.load_midi(input_path)
         if not midi_data: return []
         
@@ -505,7 +505,7 @@ class EnsembleGenerator:
                         generated = style_strategy.apply(chord_notes, dummy_note, velocity_scale, midi_data, root_pitch=root_pitch)
                         new_inst.notes.extend(generated)
                 
-                self.humanize(new_inst.notes)
+                self.humanize(new_inst.notes, timing_jitter=timing_jitter)
                 new_midi.instruments.append(new_inst)
                 
                 # Output Filename Modification for Expansion

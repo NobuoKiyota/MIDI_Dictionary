@@ -47,6 +47,14 @@ class EnsembleApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.slider_vel.set(0.9)
         self.slider_vel.pack(side="left", padx=5)
 
+        # Timing Jitter Slider
+        self.label_jitter = ctk.CTkLabel(self.frame_controls, text="Jitter: 10ms")
+        self.label_jitter.pack(side="left", padx=5)
+        
+        self.slider_jitter = ctk.CTkSlider(self.frame_controls, from_=0.0, to=0.05, number_of_steps=50, width=150, command=self.update_jitter_label)
+        self.slider_jitter.set(0.01)
+        self.slider_jitter.pack(side="left", padx=5)
+
         # Key Selector
         self.label_key = ctk.CTkLabel(self.frame_controls, text="Key:")
         self.label_key.pack(side="left", padx=5)
@@ -189,6 +197,10 @@ class EnsembleApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def update_vel_label(self, value):
         self.label_vel.configure(text=f"Vel Scale: {float(value):.1f}")
 
+    def update_jitter_label(self, value):
+        ms = int(float(value) * 1000)
+        self.label_jitter.configure(text=f"Jitter: {ms}ms")
+
     def on_drop(self, event):
         file_path = event.data
         if file_path.startswith('{') and file_path.endswith('}'):
@@ -217,6 +229,7 @@ class EnsembleApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.stop_event.clear()
         vel_scale = self.slider_vel.get()
+        jitter_val = self.slider_jitter.get()
         selected_key = self.option_key.get()
         
         # Collect Expansion Flags
@@ -249,7 +262,7 @@ class EnsembleApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.log(f"Style Types Allowed: {allowed}")
         
         # Run in thread
-        threading.Thread(target=self._generate_thread, args=(self.current_file, vel_scale, selected_key, expansion_flags, strict_val, allowed), daemon=True).start()
+        threading.Thread(target=self._generate_thread, args=(self.current_file, vel_scale, selected_key, expansion_flags, strict_val, allowed, jitter_val), daemon=True).start()
 
     def stop_generation(self):
         if not self.stop_event.is_set():
@@ -257,7 +270,7 @@ class EnsembleApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self.log(">>> Stopping generation... (Please wait for current file)")
             self.btn_run.configure(state="disabled") # Disable until thread finishes
 
-    def _generate_thread(self, input_file, vel_scale, key_arg, expansion_flags, strict_val, allowed_types):
+    def _generate_thread(self, input_file, vel_scale, key_arg, expansion_flags, strict_val, allowed_types, jitter_val):
         try:
             generated = self.generator.generate(
                 input_file, 
@@ -266,6 +279,7 @@ class EnsembleApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 expansion_flags=expansion_flags,
                 strict_validation=strict_val,
                 allowed_types=allowed_types,
+                timing_jitter=jitter_val,
                 stop_event=self.stop_event
             )
             

@@ -2,9 +2,14 @@ import pretty_midi
 import random
 import os
 import pandas as pd
-from registries import register_style
-# Removed: from base_strategies import StyleStrategy
-from utils import get_tempo_at_time
+try:
+    from .registries import register_style
+    # Removed: from base_strategies import StyleStrategy
+    from .utils import get_tempo_at_time
+except ImportError:
+    from registries import register_style
+    # Removed: from base_strategies import StyleStrategy
+    from utils import get_tempo_at_time
 
 # New StyleStrategy base class definition
 # New StyleStrategy base class definition

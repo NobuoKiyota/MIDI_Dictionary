@@ -1,5 +1,8 @@
 import pretty_midi
-from constants import NOTE_NAMES
+try:
+    from .constants import NOTE_NAMES
+except ImportError:
+    from constants import NOTE_NAMES
 
 def detect_key(midi_data):
     """
