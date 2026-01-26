@@ -25,11 +25,11 @@ SEARCH_PLACEHOLDER = "Search..."
 
 # Master Lists
 CHORD_LIST = [
-    "None", "Power", "Major", "minor", "M7", "m7", "7th","mM7","sus4", "aug", "dim",
+    "None", "Power", "Major", "minor", "M7", "m7", "7th", "m7b5", "mM7","sus4", "aug", "dim",
      "9","m9", "b9","mb9", "11", "m11", "b11", "mb11", "13", "m13", "b13", "mb13"
 ]
 
-KEY_LIST = ['-', 'C', 'Cs', 'D', 'Ds', 'E', 'F', 'Fs', 'G', 'Gs', 'A', 'As', 'B']
+KEY_LIST = ['-', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 CATEGORY_LIST = [
     "Rythem", "Bass", "Chord", "Arp", "Melody",

@@ -1,6 +1,11 @@
-from registries import register_chord
-from base_strategies import ChordStrategy
-from constants import MAJOR_SCALE, MINOR_SCALE, HARMONIC_MINOR_SCALE, MELODIC_MINOR_SCALE
+try:
+    from .registries import register_chord
+    from .base_strategies import ChordStrategy
+    from .constants import MAJOR_SCALE, MINOR_SCALE, HARMONIC_MINOR_SCALE, MELODIC_MINOR_SCALE
+except ImportError:
+    from registries import register_chord
+    from base_strategies import ChordStrategy
+    from constants import MAJOR_SCALE, MINOR_SCALE, HARMONIC_MINOR_SCALE, MELODIC_MINOR_SCALE
 
 @register_chord("Maj")
 class MajorTriadStrategy(ChordStrategy):

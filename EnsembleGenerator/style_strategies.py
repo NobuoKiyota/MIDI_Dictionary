@@ -21,7 +21,23 @@ INTERVAL_RULES = {
     "7th": [4, 3, 3, 2],
     "dim": [3, 3, 3, 3],
     "aug": [4, 4, 4],
-    "Default": [4, 3, 5] 
+    "Default": [4, 3, 5],
+    # Tension Rules (5-step cycle summing to 12 or handling wrap)
+    # M9: R, 3, 5, 7, 9 (0, 4, 7, 11, 14). Wrap 14->12 is -2.
+    "M9": [4, 3, 4, 3, -2],
+    # m9: R, b3, 5, b7, 9 (0, 3, 7, 10, 14). Wrap 14->12 is -2.
+    "m9": [3, 4, 3, 4, -2],
+    # 9: R, 3, 5, b7, 9 (0, 4, 7, 10, 14). Wrap 14->12 is -2.
+    "9": [4, 3, 3, 4, -2],
+    # m11: R, b3, 5, b7, 11 (0, 3, 7, 10, 17). Wrap 17->12 is -5.
+    "m11": [3, 4, 3, 7, -5],
+    # m7b5(11): R, b3, b5, b7, 11 (0, 3, 6, 10, 17). Wrap 17->12 is -5.
+    "m7b5(11)": [3, 3, 4, 7, -5],
+    # 7(b9): R, 3, 5, b7, b9 (0, 4, 7, 10, 13). Wrap 13->12 is -1.
+    "7(b9)": [4, 3, 3, 3, -1],
+    # M7(11)? Usually lydian #11 (18). 
+    # M7(#11): 0, 4, 7, 11, 18. Wrap 18->12 is -6.
+    "M7(#11)": [4, 3, 4, 7, -6] 
 }
 
 class ExternalStyleStrategy(StyleStrategy):
@@ -38,6 +54,10 @@ class ExternalStyleStrategy(StyleStrategy):
             if v_idx not in self.voices:
                 self.voices[v_idx] = {'seq': [], 'gate': [], 'vel': [], 'swing': 0.0}
             
+            # Store rename_src if present (once is enough)
+            if row.get('rename_src') and not hasattr(self, 'rename_src'):
+                self.rename_src = row['rename_src']
+            
             p_type = row['type']
             if p_type == 'seq':
                 self.voices[v_idx]['seq'] = row['data']
@@ -50,8 +70,26 @@ class ExternalStyleStrategy(StyleStrategy):
     def _detect_chord_type(self, chord_notes, root_pitch):
         if not chord_notes or not root_pitch: return "Default"
         intervals = sorted([ (p - root_pitch) % 12 for p in chord_notes ])
+        # Also include extended intervals (14, 17 etc mod 12 are 2, 5) 
+        # But 'intervals' are mod 12. So 9th is 2. 11th is 5.
         s_int = set(intervals)
         
+        # 5-Note Checks (Prioritize)
+        # M9: 0, 4, 7, 11, 2
+        if {0, 4, 7, 11, 2}.issubset(s_int): return "M9"
+        # m9: 0, 3, 7, 10, 2
+        if {0, 3, 7, 10, 2}.issubset(s_int): return "m9"
+        # 9: 0, 4, 7, 10, 2
+        if {0, 4, 7, 10, 2}.issubset(s_int): return "9"
+        # 7(b9): 0, 4, 7, 10, 1
+        if {0, 4, 7, 10, 1}.issubset(s_int): return "7(b9)"
+        # m11 (assuming 9 omit? or just 11 present? 11 is 5 semitones)
+        # m11 def: 0, 3, 7, 10, 5
+        if {0, 3, 7, 10, 5}.issubset(s_int): return "m11"
+        # m7b5(11): 0, 3, 6, 10, 5
+        if {0, 3, 6, 10, 5}.issubset(s_int): return "m7b5(11)"
+
+        # 4-Note Checks
         if {0, 4, 7, 11}.issubset(s_int): return "M7"
         if {0, 3, 7, 10}.issubset(s_int): return "m7"
         if {0, 4, 7, 10}.issubset(s_int): return "7th"
@@ -64,7 +102,7 @@ class ExternalStyleStrategy(StyleStrategy):
     def _get_pitch_from_step(self, step_val, root_pitch, chord_type):
         if root_pitch is None: return 60 
         rule = INTERVAL_RULES.get(chord_type, INTERVAL_RULES["Default"])
-        current_pitch = root_pitch
+        current_pitch = root_pitch + 12
         steps_remaining = step_val
         idx = 0
         while steps_remaining > 0:
@@ -125,7 +163,9 @@ class ExternalStyleStrategy(StyleStrategy):
                 
                 timing_offset = 0.0
                 if (abs_step_idx % 2) == 1: 
-                    timing_offset += swing_amount
+                    # Interpret swing as ratio of step_dur (e.g. 0.3 => 30% delay)
+                    # Previous: timing_offset += swing_amount (treated as seconds, caused massive lag)
+                    timing_offset += swing_amount * step_dur
 
                 if str(seq_val_str) != '-1' and str(seq_val_str) != '':
                     if True: 
@@ -188,16 +228,26 @@ def load_style_catalog(file_path="ensemble_styles.xlsx"):
                 voice = int(row.get('voice', 1))
                 p_type = row.get('type', 'seq')
                 swing = float(row.get('swing', 0.0)) if not pd.isna(row.get('swing')) else 0.0
+                rename_val = row.get('rename_src', None)
+                if pd.isna(rename_val): rename_val = None
                 
-                # Extract 01..32
+                # Extract 01..128 (8 bars)
                 data_list = []
-                # Detect max columns (dynamic?) Or fixed 32? User said 1..32.
-                # Let's iterate 1..64 safely?
-                for i in range(1, 65):
-                    col_key = f"{i:02}"
-                    if col_key in df.columns:
-                        val = row[col_key]
-                        
+                # Support up to 128 steps (8 bars)
+                # Robust Column Lookup: Check "01", "1", 1
+                for i in range(1, 129):
+                    val = None
+                    found = False
+                    
+                    # Try keys
+                    possible_keys = [f"{i:02}", str(i), i]
+                    for key in possible_keys:
+                         if key in df.columns:
+                             val = row[key]
+                             found = True
+                             break
+                    
+                    if found:
                         # Process value based on type
                         if pd.isna(val) or val == '':
                             if p_type == 'seq': val = '-1'
@@ -212,14 +262,18 @@ def load_style_catalog(file_path="ensemble_styles.xlsx"):
                             except:
                                 data_list.append(1.0)
                     else:
-                        break # End of columns
+                        # If a column in the middle is missing, should we consistency break?
+                        # Usually patterns are contiguous. If "17" is missing, we stop.
+                        break 
+
                 
                 row_data = {
                     'style_name': name,
                     'voice': voice,
                     'type': p_type,
                     'data': data_list,
-                    'swing': swing
+                    'swing': swing,
+                    'rename_src': rename_val
                 }
                 
                 if name not in catalog:

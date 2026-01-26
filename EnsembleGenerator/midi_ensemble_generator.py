@@ -2,7 +2,9 @@ import pretty_midi
 import argparse
 import os
 import random
+import random
 import sys
+import pandas as pd # New for Excel export
 
 # Import components
 # Using relative imports if running as package, or absolute for script compat
@@ -10,20 +12,32 @@ import sys
 if __package__ is None or __package__ == '':
     # Script running standalone
     from constants import NOTE_NAMES, get_note_name
+    from constants import MAJOR_SCALE, MINOR_SCALE, HARMONIC_MINOR_SCALE, MELODIC_MINOR_SCALE # Import scale constants
+    from constants import MAJOR_7TH_QUALITIES, MINOR_7TH_QUALITIES, HARMONIC_MINOR_7TH_QUALITIES, MELODIC_MINOR_7TH_QUALITIES
     from utils import detect_key, get_tempo_at_time
     from registries import CHORD_REGISTRY, STYLE_REGISTRY
     import chord_strategies # Triggers registration
     import style_strategies # Triggers registration
     from style_strategies import load_style_catalog, ExternalStyleStrategy
     from midi_analyzer import MidiAnalyzer
+    from expansion_strategies import DiatonicTriadStrategy, Diatonic7thStrategy, \
+    HarmonicMinorStrategy, MelodicMinorStrategy, \
+    DiatonicTensionStrategy # New
+
 else:
-    from .constants import NOTE_NAMES, get_note_name
+    from .constants import NOTE_NAMES, get_note_name, MAJOR_SCALE, MINOR_SCALE, HARMONIC_MINOR_SCALE, MELODIC_MINOR_SCALE
+    from .constants import MAJOR_7TH_QUALITIES, MINOR_7TH_QUALITIES, HARMONIC_MINOR_7TH_QUALITIES, MELODIC_MINOR_7TH_QUALITIES
     from .utils import detect_key, get_tempo_at_time
     from .registries import CHORD_REGISTRY, STYLE_REGISTRY
     from . import chord_strategies
     from . import style_strategies
     from .style_strategies import load_style_catalog, ExternalStyleStrategy
     from .midi_analyzer import MidiAnalyzer
+    from .expansion_strategies import DiatonicTriadStrategy, Diatonic7thStrategy, \
+    HarmonicMinorStrategy, MelodicMinorStrategy, \
+    DiatonicTensionStrategy # New
+
+
 
 # --- Presets ---
 PRESETS = {
@@ -37,6 +51,8 @@ PRESETS = {
 def register_external_styles(registry):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     excel_path = os.path.join(script_dir, "ensemble_styles.xlsx")
+    print("Clearing Registry and reloading...")
+    registry.clear() # Fix for caching issue
     external_styles = load_style_catalog(excel_path)
     
     for name, voices_data in external_styles.items():
@@ -53,6 +69,13 @@ class EnsembleGenerator:
         self.output_dir = output_dir
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
+
+        # Initialize expansion strategies once
+        self.triad_strat = DiatonicTriadStrategy()
+        self.seventh_strat = Diatonic7thStrategy()
+        self.harmonic_strat = HarmonicMinorStrategy()
+        self.melodic_strat = MelodicMinorStrategy()
+        self.tension_strat = DiatonicTensionStrategy() # New
 
     def load_midi(self, file_path):
         try:
@@ -172,12 +195,13 @@ class EnsembleGenerator:
         merged.append(current)
         return merged
 
-    def generate(self, input_path, velocity_scale=0.9, key_arg=None, chord_filter=None, style_filter=None, preset_name=None, output_subdir=None):
+    def generate(self, input_path, velocity_scale=0.9, key_arg=None, chord_filter=None, style_filter=None, preset_name=None, output_subdir=None, expansion_flags=None, strict_validation=False, allowed_types=None, stop_event=None):
         midi_data = self.load_midi(input_path)
         if not midi_data: return []
         
         original_name = os.path.splitext(os.path.basename(input_path))[0]
         generated_files = []
+        metadata_list = [] # For Auto-Registration Report
         
         # --- Resolve Filters ---
         target_combinations = [] 
@@ -264,34 +288,107 @@ class EnsembleGenerator:
             beat_events = []
             prev_centroid = None 
             
-            for group in beat_groups:
-                notes = group['notes']
-                if not notes: continue
-                
-                dominant = self.get_dominant_root(notes, group['start'])
-                if not dominant: continue
-
-                root_pitch = dominant.harmonic_pitch
-                raw_chord = chord_strategy.get_notes(root_pitch, key_info)
-                
-                if len(raw_chord) == 3:
-                    voiced_chord, new_centroid = self.get_best_voicing(raw_chord, prev_centroid)
-                    prev_centroid = new_centroid
-                else:
-                    voiced_chord = raw_chord
-                
-                vel = dominant.note.velocity
-                beat_events.append({
-                    'start': group['start'],
-                    'end': group['end'],
-                    'chord_notes': voiced_chord,
-                    'notes': notes, 
-                    'velocity': vel,
-                    'root_pitch': root_pitch # Added for extended step logic
-                })
+            prev_centroid = None 
             
-            merged_events = self.merge_events(beat_events)
-            beat_events_cache[chord_name] = (beat_events, merged_events)
+            # --- Scale Expansion Mode (Modular) ---
+            # expansion_iterations will now hold: (degree_idx, target_root, dynamic_chord_name_override)
+            # We iterate differently. We need to collect ALL tasks from enabled strategies.
+            
+            expansion_tasks = []
+            
+            if expansion_flags:
+                # expansion_flags is dict: {'triad': Bool, '7th': Bool, ...}
+                
+                if expansion_flags.get('triad'):
+                    expansion_tasks.extend(self.triad_strat.get_iterations(key_info))
+                if expansion_flags.get('7th'):
+                    expansion_tasks.extend(self.seventh_strat.get_iterations(key_info))
+                if expansion_flags.get('harmonic_minor'):
+                    expansion_tasks.extend(self.harmonic_strat.get_iterations(key_info))
+                if expansion_flags.get('melodic_minor'):
+                    expansion_tasks.extend(self.melodic_strat.get_iterations(key_info))
+                if expansion_flags.get('tension'):
+                    expansion_tasks.extend(self.tension_strat.get_iterations(key_info))
+            
+            if not expansion_tasks:
+                 # Default Mode: Single pass (dummy task)
+                 expansion_tasks.append({'degree': -1, 'root_offset': None, 'chord_name': None})
+            
+            for task in expansion_tasks:
+                # Check for Stop Event
+                if stop_event and stop_event.is_set():
+                    print("Generation cancelled by user.")
+                    return generated_files
+
+                degree_idx = task.get('degree')
+                root_offset = task.get('root_offset')
+                dynamic_name = task.get('chord_name')
+                
+                target_root_override = None
+                if root_offset is not None:
+                    target_root_override = key_info[0] + root_offset
+
+                # Reset beat events for each expansion iteration
+                current_loop_beat_events = []
+                prev_centroid = None # Reset voicing context
+                
+                for group in beat_groups:
+                    notes = group['notes']
+                    if not notes: continue
+                    
+                    dominant = self.get_dominant_root(notes, group['start'])
+                    if not dominant: continue
+    
+                    if target_root_override is not None:
+                        # Override root pitch for Scale Expansion
+                        base_octave_val = (dominant.harmonic_pitch // 12) * 12
+                        final_root_pitch = base_octave_val + (target_root_override % 12)
+                    else:
+                        final_root_pitch = dominant.harmonic_pitch
+                    
+                    root_pitch = final_root_pitch
+
+                    if task.get('chord_intervals'):
+                        # Use explicit intervals from Expansion Strategy
+                        raw_chord = []
+                        for semi in task['chord_intervals']:
+                            p = final_root_pitch + semi
+                            raw_chord.append(p)
+                    else:
+                        # Default Strategy Lookup
+                        raw_chord = chord_strategy.get_notes(final_root_pitch, key_info)
+                    
+                    if len(raw_chord) == 3:
+                        voiced_chord, new_centroid = self.get_best_voicing(raw_chord, prev_centroid)
+                        prev_centroid = new_centroid
+                    else:
+                        voiced_chord = raw_chord
+                    
+                    vel = dominant.note.velocity
+                    current_loop_beat_events.append({
+                        'start': group['start'],
+                        'end': group['end'],
+                        'chord_notes': voiced_chord,
+                        'notes': notes, 
+                        'velocity': vel,
+                        'root_pitch': root_pitch # Added for extended step logic
+                    })
+                
+                current_merged_events = self.merge_events(current_loop_beat_events)
+                
+                # Cache Key: 
+                # If standard: chord_name
+                # If expanded: chord_name + dynamic_name (to avoid collision)
+                
+                cache_key = chord_name
+                if dynamic_name:
+                    # e.g. Diatonic_7th_CMaj7
+                    # We append dynamic name to differentiate in cache
+                    # Or we can append degree if we want distinct files for same chord (e.g. I and V might both be Maj, but we want separate files?)
+                    # Yes, keep degree for ordering but use dynamic name for readability
+                    cache_key = f"{chord_name}_{degree_idx}_{dynamic_name}"
+                    
+                beat_events_cache[cache_key] = (current_loop_beat_events, current_merged_events)
 
         for chord_name, style_name in target_combinations:
             # [TEMPORARY] User requested to only generate Diatonic_7th mixed with Arpeggio styles (Excel or Internal)
@@ -301,74 +398,196 @@ class EnsembleGenerator:
             if style_name in ["Pad", "Rhythm"]:
                 continue
 
-            if chord_name not in beat_events_cache: continue
-            if style_name not in STYLE_REGISTRY: 
-                print(f"Warning: Style '{style_name}' not found.")
-                continue
+            # Handling Expanded Keys in Cache
             
-            beat_events, merged_events = beat_events_cache[chord_name]
-            style_cls = STYLE_REGISTRY[style_name]
-            
-            try:
-                style_strategy = style_cls()
-            except TypeError:
-                 if not callable(style_cls):
-                     style_strategy = style_cls
-                 else:
-                     style_strategy = style_cls()
-
-            new_midi = pretty_midi.PrettyMIDI()
-            program = pretty_midi.instrument_name_to_program('Acoustic Grand Piano')
-            new_inst = pretty_midi.Instrument(program=program)
-            
-            if style_name == "Pad":
-                source_events = merged_events
-                use_bass_rhythm = False
+            matching_cache_keys = []
+            if expansion_flags:
+                 for ck in beat_events_cache.keys():
+                     if ck.startswith(f"{chord_name}_"):
+                         matching_cache_keys.append(ck)
             else:
-                source_events = beat_events
-                use_bass_rhythm = True
+                 if chord_name in beat_events_cache:
+                     matching_cache_keys.append(chord_name)
+
             
-            for event in source_events:
-                start = event['start']
-                end = event['end']
-                chord_notes = event['chord_notes']
-                chord_notes = event['chord_notes']
-                velocity_base = event['velocity']
-                root_pitch = event.get('root_pitch', None) # Get root pitch
+            for cache_key in matching_cache_keys:
+                # Check Stop Event inside inner loop too
+                if stop_event and stop_event.is_set():
+                    print("Generation cancelled by user.")
+                    return generated_files
+
+                if style_name not in STYLE_REGISTRY: 
+                    print(f"Warning: Style '{style_name}' not found.")
+                    continue
                 
-                if use_bass_rhythm:
-                    for ana in event['notes']:
-                        note = ana.note
-                        thinning_active = (style_name == "Rhythm")
-                        current_chord = chord_notes
-                        if thinning_active:
-                            duration = note.end - note.start
-                            is_fast = duration < 0.25
-                            is_strong = ana.sub_beat_type == '1'
-                            if is_fast and not is_strong and len(current_chord) >= 3:
-                                sorted_c = sorted(current_chord)
-                                current_chord = [sorted_c[0], sorted_c[1]]
+                beat_events, merged_events = beat_events_cache[cache_key]
+                style_cls = STYLE_REGISTRY[style_name]
+                
+                try:
+                    style_strategy = style_cls()
+                except TypeError:
+                    if not hasattr(style_strategy, 'apply'):
+                        continue
                         
-                        generated = style_strategy.apply(current_chord, note, velocity_scale, midi_data, root_pitch=root_pitch)
-                        new_inst.notes.extend(generated)
+                # [FILTERING] Check Allowed Types (rename_src based)
+                # If allowed_types is provided, we check style_strategy.rename_src
+                if allowed_types is not None:
+                    # Resolve src type
+                    src_type = getattr(style_strategy, 'rename_src', 'Default')
+                    if src_type is None: src_type = 'Default'
+                    if str(src_type) not in allowed_types:
+                        # print(f"Skipping {style_name}: Type '{src_type}' not in allowed list.")
+                        continue
+
+                # [VALIDATION] Check Voice Count (Optional Strict Mode)
+                if strict_validation:
+                    # Determine required voices
+                    required_voices = 3 # Default (Triad)
+                    task_type = task.get('type', '7th') # Default to higher req if unknown? Or check chord name
+                    
+                    # If standard mode (no expansion flags), task has dummy type but chord_name usually has info
+                    if not expansion_flags and "7th" in chord_name:
+                        required_voices = 4
+                    elif task_type in ['7th', 'HarmonicMinor', 'MelodicMinor']:
+                        required_voices = 4
+                    elif task_type == 'Triad':
+                        required_voices = 3
+                    
+                    # Check if ExternalStyleStrategy (has .voices dict)
+                    if isinstance(style_strategy, ExternalStyleStrategy):
+                        voice_count = len(style_strategy.voices)
+                        if voice_count < required_voices:
+                            display_name = dynamic_name if dynamic_name else chord_name
+                            print(f"Skipping {display_name}_{style_name}: Insufficient voices ({voice_count} < {required_voices}) for {task_type}")
+                            continue
+
+                new_midi = pretty_midi.PrettyMIDI()
+                program = pretty_midi.instrument_name_to_program('Acoustic Grand Piano')
+                new_inst = pretty_midi.Instrument(program=program)
+                
+                if style_name == "Pad":
+                    source_events = merged_events
+                    use_bass_rhythm = False
                 else:
-                    dummy_note = pretty_midi.Note(
-                        velocity=int(velocity_base),
-                        pitch=60, 
-                        start=start,
-                        end=end
-                    )
-                    generated = style_strategy.apply(chord_notes, dummy_note, velocity_scale, midi_data, root_pitch=root_pitch)
-                    new_inst.notes.extend(generated)
-            
-            self.humanize(new_inst.notes)
-            new_midi.instruments.append(new_inst)
-            
-            output_filename = f"{original_name}_{chord_name}_{style_name}.mid"
-            output_path = os.path.join(final_output_dir, output_filename)
-            new_midi.write(output_path)
-            generated_files.append(output_path)
-            print(f"Generated: {output_path}")
+                    source_events = beat_events
+                    use_bass_rhythm = True
+                
+                for event in source_events:
+                    start = event['start']
+                    end = event['end']
+                    chord_notes = event['chord_notes']
+                    chord_notes = event['chord_notes']
+                    velocity_base = event['velocity']
+                    root_pitch = event.get('root_pitch', None) # Get root pitch
+                    
+                    if use_bass_rhythm:
+                        for ana in event['notes']:
+                            note = ana.note
+                            thinning_active = (style_name == "Rhythm")
+                            current_chord = chord_notes
+                            if thinning_active:
+                                duration = note.end - note.start
+                                is_fast = duration < 0.25
+                                is_strong = ana.sub_beat_type == '1'
+                                if is_fast and not is_strong and len(current_chord) >= 3:
+                                    sorted_c = sorted(current_chord)
+                                    current_chord = [sorted_c[0], sorted_c[1]]
+                            
+                            generated = style_strategy.apply(current_chord, note, velocity_scale, midi_data, root_pitch=root_pitch)
+                            new_inst.notes.extend(generated)
+                    else:
+                        dummy_note = pretty_midi.Note(
+                            velocity=int(velocity_base),
+                            pitch=60, 
+                            start=start,
+                            end=end
+                        )
+                        generated = style_strategy.apply(chord_notes, dummy_note, velocity_scale, midi_data, root_pitch=root_pitch)
+                        new_inst.notes.extend(generated)
+                
+                self.humanize(new_inst.notes)
+                new_midi.instruments.append(new_inst)
+                
+                # Output Filename Modification for Expansion
+                suffix = ""
+                chord_name_for_file = chord_name
+                
+                if expansion_flags:
+                    # Extract info from cache_key
+                    # Format: {chord_name}_{degree_idx}_{dynamic_name}
+                    prefix = f"{chord_name}_"
+                    if cache_key.startswith(prefix):
+                        remainder = cache_key[len(prefix):]
+                        # remainder e.g. "1_CM7"
+                        if "_" in remainder:
+                             d_idx_str, d_name = remainder.split("_", 1)
+                             chord_name_for_file = d_name
+                             # Suffix: Keep it empty as requested ("An1_CM7_Style")
+                             suffix = "" 
+                
+                if hasattr(style_strategy, 'rename_src') and style_strategy.rename_src:
+                    # Replace 'Bass' with the new value
+                    base_name_for_output = original_name.replace("Bass", str(style_strategy.rename_src))
+                else:
+                    base_name_for_output = original_name
+
+                output_filename = f"{base_name_for_output}_{chord_name_for_file}_{style_name}{suffix}.mid"
+                output_path = os.path.join(final_output_dir, output_filename)
+                
+                try:
+                    new_midi.write(output_path)
+                    generated_files.append(output_path)
+                    print(f"Generated: {output_path}")
+                except PermissionError:
+                    print(f"Error: Could not write to {output_path}. File might be open in another program (DAW, Player). Skipping.")
+                except Exception as e:
+                    print(f"Error writing output file {output_path}: {e}")
+                
+                # --- Metadata Collection ---
+                try:
+                    # Calculate Bars (Approximate)
+                    tempo = get_tempo_at_time(midi_data, 0)
+                    duration = new_midi.get_end_time()
+                    bars = max(1, int(round(duration / (60.0 / tempo) / 4.0)))
+                    
+                    root_name = "C"
+                    if key_info:
+                        root_name = get_note_name(key_info[0])
+                    
+                    group_val = getattr(style_strategy, 'rename_src', '')
+                    if not group_val: group_val = ''
+                    
+                    meta = {
+                        'FileName': output_filename,
+                        'FilePath': os.path.abspath(output_path),
+                        'Category': output_subdir if output_subdir else "Ensemble",
+                        'Instruments': style_name,
+                        'Bar': bars,
+                        'Chord': chord_name_for_file,
+                        'Root': root_name,
+                        'Group': str(group_val),
+                        'Comment': "Generated by Ver 1.8.1",
+                        '_SourceFile': os.path.basename(input_path)
+                    }
+                    metadata_list.append(meta)
+                except Exception as meta_e:
+                    print(f"Metadata Warning: {meta_e}")
+        # --- Export Auto-Registration Excel ---
+        if metadata_list:
+            try:
+                import pandas as pd
+                df = pd.DataFrame(metadata_list)
+                # Ensure column order matches MasterLibraly if possible
+                cols = ['FileName', 'FilePath', 'Category', 'Instruments', 'Bar', 'Chord', 'Root', 'Group', 'Comment', '_SourceFile']
+                # reorder only if columns exist
+                final_cols = [c for c in cols if c in df.columns]
+                df = df[final_cols]
+                
+                export_path = os.path.join(final_output_dir, "_Import_Source.xlsx")
+                df.to_excel(export_path, index=False)
+                print(f"Exported Registration Source: {export_path}")
+            except Exception as e:
+                print(f"Error exporting Excel report: {e}")
 
         return generated_files
 
@@ -381,6 +600,7 @@ if __name__ == "__main__":
     parser.add_argument("--style", default=None, help="Comma-separated style strategies (e.g. 'Pad,Arp')")
     parser.add_argument("--preset", default=None, help="Preset name (pop, rock, game, dance, lofi)")
     parser.add_argument("--output", default=None, help="Output subdirectory name")
+    parser.add_argument("--expand_scale", action="store_true", help="[EXPERIMENTAL] Generate all scale degrees from input")
     
     args = parser.parse_args()
     
@@ -392,5 +612,6 @@ if __name__ == "__main__":
         chord_filter=args.chord,
         style_filter=args.style,
         preset_name=args.preset,
-        output_subdir=args.output
+        output_subdir=args.output,
+        expand_scale=args.expand_scale
     )

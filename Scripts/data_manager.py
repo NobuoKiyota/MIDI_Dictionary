@@ -95,9 +95,9 @@ class DataManager:
             return
             
         dfs = []
-        # Glob pattern: MIDI_Library/*/*.xlsx
-        pattern = os.path.join(self.midi_lib_path, "*", "*.xlsx")
-        files = glob.glob(pattern)
+        # Glob pattern: MIDI_Library/**/*.xlsx (Recursive)
+        pattern = os.path.join(self.midi_lib_path, "**", "*.xlsx")
+        files = glob.glob(pattern, recursive=True)
         
         if not files:
             return
@@ -142,10 +142,18 @@ class DataManager:
             combined.drop_duplicates(subset=["FilePath"], keep="last", inplace=True)
             
             master_dest = os.path.join(self.root_dir, "MasterLibraly.xlsx")
-            combined.to_excel(master_dest, index=False)
-            
-            # Update self.df to reflect this fresh integration
-            self.df = combined.fillna("")
+            try:
+                combined.to_excel(master_dest, index=False)
+                # Update self.df to reflect this fresh integration
+                self.df = combined.fillna("")
+                print("Master DB integrated successfully.")
+            except PermissionError:
+                print(f"Warning: Could not write to {master_dest}. File is open in Excel. Skipping integration save.")
+                # We can still use the combined data in memory if we want, or fallback?
+                # Usually better to use what we read, even if we can't save the consolidated version.
+                self.df = combined.fillna("")
+            except Exception as e:
+                 print(f"Error saving Master DB: {e}")
 
     def save_db(self):
         # We only save NEW entries to the LOCAL DB.

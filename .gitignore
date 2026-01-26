@@ -26,6 +26,8 @@ library_*.xlsx
 # Assuming typical use case where library is local:
 OldMidi/
 MIDI_learning/
+ExpansionValidation/
+ExpansionTest/
 
 # Logs
 *.log

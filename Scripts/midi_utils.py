@@ -25,8 +25,17 @@ class MidiHandler:
         """
         Analyzes a MIDI file to extract metadata for the preview and database using MidiAnalyzer.
         """
+        # Add EnsembleGenerator to path to find midi_analyzer
+        import sys
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        root_dir = os.path.dirname(script_dir)
+        ensemble_dir = os.path.join(root_dir, "EnsembleGenerator")
+        if ensemble_dir not in sys.path:
+            sys.path.append(ensemble_dir)
+            
         from midi_analyzer import MidiAnalyzer
-        analyzer = MidiAnalyzer()
+        from midi_analyzer import MidiAnalyzer
+        from utils import detect_key, get_tempo_at_time # Import utils from EnsembleGenerator
         
         # Use simple load first to check validity and get basic notes for preview
         pm = self.load_midi(file_path)
@@ -34,7 +43,50 @@ class MidiHandler:
             return None
 
         # Detailed Analysis
-        analysis_result = analyzer.analyze(file_path) # This does the heavy lifting
+        analyzer = MidiAnalyzer(pm) # Pass midi_data
+        # Note: analyzer.analyze() returns a LIST of note analysis objects, not a dict.
+        # We need to construct the dict expected by this script manually.
+        note_analysis_list = analyzer.analyze()
+        
+        # Helper: Extract Info
+        key_info = detect_key(pm)
+        root_str = "C"
+        scale_str = "Major"
+        chord_str = "C Major"
+        if key_info:
+             from constants import get_note_name
+             root_str = get_note_name(key_info[0])
+             scale_str = key_info[1]
+             chord_str = f"{root_str} {scale_str}"
+             
+        groove_str = "8-beat"
+        if pm.instruments and not pm.instruments[0].is_drum:
+             groove_str = analyzer.detect_groove(pm.instruments[0])
+             
+        # Style Features (Approximation for Learning)
+        # We need to extract features from the note list if possible, or dummy it.
+        style_features = {} 
+        
+        # Calculate duration
+        tempo = get_tempo_at_time(pm, 0)
+        end_time = pm.get_end_time()
+        beat_cursor = 0.0
+        # Calculate bars roughly
+        bars = max(1, int(round(end_time / (60.0 / tempo) / 4.0)))
+
+        analysis_result = {
+             'groove': groove_str,
+             'instrument': pm.instruments[0].name if pm.instruments else "Piano",
+             'chord': chord_str,
+             'root': root_str,
+             'scale': scale_str,
+             'style': 'Melody', # Default
+             'time_signature': '4/4', # Default or read from changes
+             'duration_bars': bars,
+             'tempo': tempo,
+             'comment_suffix': '',
+             'style_features': style_features
+        }
         
         # Prepare notes for UI Piano Roll
         notes_data = []
