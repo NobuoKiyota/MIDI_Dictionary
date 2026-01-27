@@ -165,6 +165,19 @@ class MainWindow(QMainWindow):
         help_action = QAction("Manual...", self)
         help_action.triggered.connect(self.open_help)
         help_menu.addAction(help_action)
+        
+        # Tools Menu
+        tools_menu = menubar.addMenu("Tools")
+        
+        checker_action = QAction("MIDI Checker Tool...", self)
+        checker_action.triggered.connect(self.open_midi_checker)
+        tools_menu.addAction(checker_action)
+
+    def open_midi_checker(self):
+        # Prevent GC by keeping reference
+        from midi_checker import MidiCheckerWindow
+        self.midi_checker_window = MidiCheckerWindow()
+        self.midi_checker_window.show()
 
     def open_visualization(self):
         from learning_visualizer import LearningVisualizer
